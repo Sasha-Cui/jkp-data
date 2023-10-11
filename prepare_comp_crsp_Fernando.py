@@ -156,7 +156,8 @@ def comp_exchanges():
         """).collect().sort('exchg')
     comp_r_ex_codes = pl.read_ipc('Raw data/comp_r_ex_codes.ft')
     __ex_country = __ex_country.join(comp_r_ex_codes, how = 'left', left_on = 'exchg', right_on = 'exchgcd')
-    exch_main = pl.when((pl.col('excntry') != 'multi national') & pl.col('excntry').is_in(special_exchanges).not_()).then(pl.lit(1)).otherwise(pl.lit(0)).alias('exch_main')
+    __ex_country = __ex_country.with_columns(pl.col('exchg').cast(pl.Int64))
+    exch_main = pl.when((pl.col('excntry') != 'multi national') & pl.col('exchg').is_in(special_exchanges).not_()).then(pl.lit(1)).otherwise(pl.lit(0)).alias('exch_main')
     __ex_country = __ex_country.with_columns(exch_main)
     return __ex_country
 def add_primary_sec(data, datevar):
@@ -316,6 +317,7 @@ def process_comp_sf1(base, __comp_sf1, freq):
     __comp_sf2 = __comp_sf2.join(crsp_mcti, how = 'left', on = ['yr', 'm']).join(ff_factors_monthly, how = 'left', on = ['yr', 'm']).drop(['date','caldt'])
     __comp_sf2 = __comp_sf2.with_columns(((pl.col('ret') - pl.coalesce(['t30ret','rf']))/scale).alias('ret_exc')).drop(['m', 'yr', 'rf', 't30ret'])
     __exchanges = comp_exchanges()
+    __comp_sf2 = __comp_sf2.with_columns(pl.col('exchg').cast(pl.Int64))
     __comp_sf2 = __comp_sf2.join(__exchanges, how = 'left', on = ['exchg'])
     __comp_sf2 = add_primary_sec(__comp_sf2, 'datadate').unique(['gvkey', 'iid', 'datadate'])
     return __comp_sf2
