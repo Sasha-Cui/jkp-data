@@ -9,7 +9,7 @@ Fill out the line:
 " wrds_session = wrds_Fernando.Connection(wrds_username= "your_username_here", wrds_password="your_password_here")"
 in the trial_full_run.py and WRDS_SQL_queries_Fernando.py files with your WRDS user data.
 
-The command to run the code is './run_code.sh'
+After those steps, you can run the code with the command: './run_code.sh'
 
 At the beginning of the execution of the code, DUO may send an alert to your phone to grant access to download the data.
 If the login attemps time out because you didn't grant access with DUO, stop the code and start again.
