@@ -2,7 +2,6 @@ import getpass
 import os
 import sys
 import stat
-import pandas as pd
 import sqlalchemy as sa
 import urllib.parse
 import polars as pl
@@ -63,7 +62,7 @@ class Connection(object):
         """
         self._verbose = verbose
         self._username = kwargs.get("wrds_username", "")
-        self._password = kwargs.get("wrds_password", "")a
+        self._password = kwargs.get("wrds_password", "")
         # PGHOST if set will override default for first attempt
         self._hostname = kwargs.get(
             "wrds_hostname", os.environ.get('PGHOST', WRDS_POSTGRES_HOST)
@@ -290,31 +289,30 @@ ORDER BY 1;
     def describe_table(self, library, table):
         """
         Takes the library and the table and describes all the columns
-          in that table.
+        in that table.
         Includes Column Name, Column Type, Nullable?, Comment
-
+    
         :param library: Postgres schema name.
         :param table: Postgres table name.
-
-        :rtype: pandas.DataFrame
-
+    
+        :rtype: polars.DataFrame
+    
         Usage::
         >>> db.describe_table('wrdssec_all', 'dforms')
                     name nullable     type comment
-              0      cik     True  VARCHAR
-              1    fdate     True     DATE
-              2  secdate     True     DATE
-              3     form     True  VARCHAR
-              4   coname     True  VARCHAR
-              5    fname     True  VARCHAR
+              0      cik     true  VARCHAR
+              1    fdate     true     DATE
+              2  secdate     true     DATE
+              3     form     true  VARCHAR
+              4   coname     true  VARCHAR
+              5    fname     true  VARCHAR
         """
         rows = self.get_row_count(library, table)
         print("Approximately {} rows in {}.{}.".format(rows, library, table))
-        table_info = pd.DataFrame.from_dict(
-            self.insp.get_columns(table, schema=library)
-        )
-        return table_info[["name", "nullable", "type", "comment"]]
-
+        table_info_dict = self.insp.get_columns(table, schema=library)
+        table_info = pl.DataFrame(table_info_dict)
+        return table_info.select(['name', 'nullable', 'type', 'comment'])
+   
     def get_row_count(self, library, table):
         """
         Uses the library and table to get the approximate row count for the table.
