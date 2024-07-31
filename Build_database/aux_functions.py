@@ -196,7 +196,7 @@ def gen_raw_data_dfs(wrds_session):
                 LEFT JOIN crsp.ccmxpf_lnkhist AS c
                     ON a.permno=c.lpermno AND (a.date>=c.linkdt OR c.linkdt IS NULL) AND
                     (a.date<=c.linkenddt OR c.linkenddt IS NULL) AND c.linktype in ('LC', 'LU', 'LS')
-                """)
+                """, schema_overrides={'me': pl.Float64, 'prc_high': pl.Float64, 'prc_low': pl.Float64})
     __crsp_sf_m = __crsp_sf_m.with_columns([pl.col('permno').cast(pl.Int64).alias('permno'),pl.col('permco').cast(pl.Int64).alias('permco')])
     __crsp_sf_m.write_ipc('Raw_data_dfs/__crsp_sf_m.ft')
     del __crsp_sf_m
@@ -213,7 +213,7 @@ def gen_raw_data_dfs(wrds_session):
                 LEFT JOIN crsp.ccmxpf_lnkhist AS c
                     ON a.permno=c.lpermno AND (a.date>=c.linkdt OR c.linkdt IS NULL) AND
                     (a.date<=c.linkenddt OR c.linkenddt IS NULL) AND c.linktype in ('LC', 'LU', 'LS')
-                """)
+                """, schema_overrides={'me': pl.Float64, 'prc_high': pl.Float64, 'prc_low': pl.Float64})
     __crsp_sf_d = __crsp_sf_d.with_columns([pl.col('permno').cast(pl.Int64).alias('permno'), pl.col('permco').cast(pl.Int64).alias('permco')])
     __crsp_sf_d.write_ipc('Raw_data_dfs/__crsp_sf_d.ft')
     del __crsp_sf_d
