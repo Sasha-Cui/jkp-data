@@ -21,6 +21,7 @@ This document provides instructions for creating a dataset based on the paper "I
      ```sh
      conda create --name jkp_factors python=3.11.7
      conda activate jkp_factors
+     conda install -c conda-forge postgresql
      pip install -r requirements.txt
      ```
 
