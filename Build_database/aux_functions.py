@@ -253,17 +253,23 @@ def download_wrds_table(conn_obj, table_name, filename, cols = None):
     print('Finished')
     
 def check_and_reset_connection(wrds_session, start_time, username, password):
-        elapsed_time = time.time() - start_time
-        if elapsed_time >= 45*60:
-            wrds_session.disconnect()
-            print('The connection to WRDS server needs to be reset due to avoid exceeding time limits.')
+    elapsed_time = time.time() - start_time
+    if elapsed_time >= 45 * 60:
+        wrds_session.disconnect()
+        print('The connection to WRDS server needs to be reset to avoid exceeding time limits.')
+        while True:
             for remaining in range(60, 0, -10):
-                print(f"Connection will be reset in {remaining} seconds. You might be sent a Duo authentication request.")
+                print(f"Attempting to reconnect in {remaining} seconds. You might be sent a Duo authentication request.")
                 time.sleep(10)
-            wrds_session = gen_wrds_connection_object(username, password)
-            print('Connection established. Continuing downloads...')
-            start_time = time.time()
-        return wrds_session, start_time
+            try:
+                wrds_session = gen_wrds_connection_object(username, password)
+                print('Connection established. Continuing downloads.')
+                start_time = time.time()
+                break
+            except Exception as e:
+                print(f"Failed to establish connection: {e}")
+                print("Retrying in 60 seconds.")
+    return wrds_session, start_time
 
 @measure_time
 def download_raw_data_tables(username, password):
