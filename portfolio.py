@@ -15,9 +15,8 @@ output_path=''
 countries=[]
 # Iterate through all files in the folder
 for file in os.listdir(os.path.join(data_path, "Characteristics")):
-    # Check if the file is a CSV file and add its name (without '.csv') to the list
-    if file.endswith(".csv"):
-        countries.append(file.replace(".csv", ""))
+    if file.endswith(".parquet"):
+        countries.append(file.replace(".parquet", ""))
 
 
 
@@ -42,8 +41,8 @@ chars = [
     "ivol_capm_21d", "ivol_capm_252d", "ivol_ff3_21d", "ivol_hxz4_21d",
     "kz_index", "lnoa_gr1a", "lti_gr1a", "market_equity",
     "mispricing_mgmt", "mispricing_perf", "ncoa_gr1a", "ncol_gr1a",
-    "netdebt_me", "netis_at", "nfna_gr1a", "ni_ar1",
-    "ni_be", "ni_inc8q", "ni_ivol", "ni_me",
+    "netdebt_me", "netis_at", "nfna_gr1a",
+    "ni_be", "ni_inc8q", "ni_me",
     "niq_at", "niq_at_chg1", "niq_be", "niq_be_chg1",
     "niq_su", "nncoa_gr1a", "noa_at", "noa_gr1a",
     "o_score", "oaccruals_at", "oaccruals_ni", "ocf_at",
@@ -160,14 +159,14 @@ def portfolios(
     
     
     #characerteristics data
-    file_path = f"{data_path}/Characteristics/{excntry}.csv"
+    file_path = f"{data_path}/Characteristics/{excntry}.parquet"
 
     # Select the required columns
     columns = ["id", "eom", "source_crsp", "comp_exchg", "crsp_exchcd", "size_grp", "ret_exc", "ret_exc_lead1m", "me", "gics", "ff49"] + chars + ['excntry']
 
     # Load the data
-    data = pl.read_csv(file_path, columns=columns, infer_schema_length=int(1e10))
-    data = data.with_columns(pl.col("eom").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("eom"))
+    data = pl.read_parquet(file_path, columns=columns)
+    data = data
 
     #capping me at nyse cut-off
     data = data.join(nyse_size_cutoffs.select(['eom', 'nyse_p80']), on='eom', how='left')
@@ -193,9 +192,9 @@ def portfolios(
     
     # Daily Returns
     if daily_pf:
-        daily_file_path = f"{data_path}/Daily Returns/{excntry}.csv"
-        daily = pl.read_csv(daily_file_path, columns=["id", "date", "ret_exc"])
-        daily = daily.with_columns(pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("date"))
+        daily_file_path = f"{data_path}/Daily_Returns/{excntry}.parquet"
+        daily = pl.read_parquet(daily_file_path, columns=["id", "date", "ret_exc"])
+        # daily = daily.with_columns(pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("date"))
         daily = daily.with_columns((pl.col("date").dt.month_start().dt.offset_by("-1d")).alias("eom_lag1"))
         #ensuring numerical columns are float-added later:
         daily = daily.with_columns(pl.col("ret_exc").cast(pl.Float64))
@@ -217,7 +216,7 @@ def portfolios(
             ])
         
             # Joining with daily return cutoffs
-            daily = daily.join(ret_cutoffs_daily.select(["year", "month", "ret_exc_0_1", "ret_exc_99_9"]).rename({"ret_exc_0_1": "p001", "ret_exc_99_9": "p999"}), on=["year", "month"], how='left')
+            daily = daily.join(ret_cutoffs_daily.with_columns([pl.col('year').cast(pl.Int64), pl.col('month').cast(pl.Int64)]).select(["year", "month", "ret_exc_0_1", "ret_exc_99_9"]).rename({"ret_exc_0_1": "p001", "ret_exc_99_9": "p999"}), on=["year", "month"], how='left')
         
             # Applying winsorization to daily returns for Compustat data (id > 99999)
             daily = daily.with_columns(
@@ -496,11 +495,11 @@ def regional_data(data, mkt, date_col, char_col, countries, weighting, countries
 
 # Extract Neccesary Information
 # Read Factor details from Excel file
-char_info = pl.read_excel(f"{data_path}/Factor Details.xlsx", sheet_name="details").select(['abr_jkp', 'direction']).rename({'abr_jkp' : 'characteristic'}).filter(pl.col('characteristic').is_not_null()).with_columns(pl.col('direction').cast(pl.Int32))
+char_info = pl.read_excel("https://github.com/bkelly-lab/ReplicationCrisis/raw/master/GlobalFactors/Factor%20Details.xlsx", sheet_name="details").select(['abr_jkp', 'direction']).rename({'abr_jkp' : 'characteristic'}).filter(pl.col('characteristic').is_not_null()).with_columns(pl.col('direction').cast(pl.Int32))
 
 
 # Read country classification details from Excel file
-country_classification = pl.read_excel(f"{data_path}Country Classification.xlsx", sheet_name="countries")
+country_classification = pl.read_excel("https://github.com/bkelly-lab/ReplicationCrisis/raw/master/GlobalFactors/Country%20Classification.xlsx", sheet_name="countries")
 
 #getting relevannt information from country classification file loaded at the start loaded at the start.
 # Select columns
@@ -530,28 +529,28 @@ regions = pl.DataFrame({
 
 
 # Read cluster lables details from Excel file
-cluster_labels = pl.read_csv(f"{data_path}/Cluster Labels.csv", infer_schema_length=int(1e10))
+cluster_labels = pl.read_csv("https://raw.githubusercontent.com/bkelly-lab/ReplicationCrisis/refs/heads/master/GlobalFactors/Cluster%20Labels.csv", infer_schema_length=int(1e10))
 
 
 #nyse_cutoffs
-nyse_size_cutoffs = pl.read_csv(f"{data_path}/nyse_cutoffs.csv", infer_schema_length=int(1e10))
-nyse_size_cutoffs = nyse_size_cutoffs.with_columns(pl.col("eom").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("eom"))
+nyse_size_cutoffs = pl.read_parquet(f"{data_path}/nyse_cutoffs.parquet")
+# nyse_size_cutoffs = nyse_size_cutoffs.with_columns(pl.col("eom").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("eom"))
 
 #return_cutoffs
-ret_cutoffs = pl.read_csv(f"{data_path}/return_cutoffs.csv", infer_schema_length=int(1e10))
-ret_cutoffs = ret_cutoffs.with_columns(pl.col("eom").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("eom"))
+ret_cutoffs = pl.read_parquet(f"{data_path}/return_cutoffs.parquet")
+# ret_cutoffs = ret_cutoffs.with_columns(pl.col("eom").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("eom"))
 ret_cutoffs = ret_cutoffs.with_columns((pl.col("eom").dt.month_start().dt.offset_by("-1d")).alias("eom_lag1"))
 if settings['daily_pf']:
-    ret_cutoffs_daily = pl.read_csv(f"{data_path}/return_cutoffs_daily.csv", infer_schema_length=int(1e10))
+    ret_cutoffs_daily = pl.read_parquet(f"{data_path}/return_cutoffs_daily.parquet")
 
 #market_returns
-market = pl.read_csv(f"{data_path}/market_returns.csv", infer_schema_length=int(1e10))
-market = market.with_columns(pl.col("eom").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("eom"))
+market = pl.read_parquet(f"{data_path}/market_returns.parquet")
+# market = market.with_columns(pl.col("eom").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("eom"))
 
 #daily_market_returns
 if settings['daily_pf']:
-    market_daily = pl.read_csv(f"{data_path}/market_returns_daily.csv", infer_schema_length=int(1e10))
-    market_daily = market_daily.with_columns(pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("date"))
+    market_daily = pl.read_parquet(f"{data_path}/market_returns_daily.parquet")
+    # market_daily = market_daily.with_columns(pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("date"))
 
 
 
@@ -850,36 +849,36 @@ else:
 
 #Writing output
 if 'market' in globals():
-    market.filter(pl.col('eom') <= settings['end_date']).write_csv(f"{output_path}/market_returns.csv")
+    market.filter(pl.col('eom') <= settings['end_date']).write_parquet(f"{output_path}/market_returns.parquet")
 if 'pf_returns' in globals() and pf_returns is not None:
-    pf_returns.filter(pl.col('eom') <= settings['end_date']).write_csv(f"{output_path}/pfs.csv")
+    pf_returns.filter(pl.col('eom') <= settings['end_date']).write_parquet(f"{output_path}/pfs.parquet")
 if 'hml_returns' in globals() and hml_returns is not None:
-    hml_returns.filter(pl.col('eom') <= settings['end_date']).write_csv(f"{output_path}/hml.csv")
+    hml_returns.filter(pl.col('eom') <= settings['end_date']).write_parquet(f"{output_path}/hml.parquet")
 if 'lms_returns' in globals() and lms_returns is not None:
-    lms_returns.filter(pl.col('eom') <= settings['end_date']).write_csv(f"{output_path}/lms.csv")
+    lms_returns.filter(pl.col('eom') <= settings['end_date']).write_parquet(f"{output_path}/lms.parquet")
 if 'cmp_returns' in globals() and cmp_returns is not None:
-    cmp_returns.filter(pl.col('eom') <= settings['end_date']).write_csv(f"{output_path}/cmp.csv")
+    cmp_returns.filter(pl.col('eom') <= settings['end_date']).write_parquet(f"{output_path}/cmp.parquet")
 if 'cluster_pfs' in globals() and cluster_pfs is not None:
-    cluster_pfs.filter(pl.col('eom') <= settings['end_date']).write_csv(f"{output_path}/clusters.csv")
+    cluster_pfs.filter(pl.col('eom') <= settings['end_date']).write_parquet(f"{output_path}/clusters.parquet")
 
 
 if settings['daily_pf']:
     if 'market_daily' in globals():
-        market_daily.filter(pl.col('date') <= settings['end_date']).write_csv(f"{output_path}/market_returns_daily.csv")
+        market_daily.filter(pl.col('date') <= settings['end_date']).write_parquet(f"{output_path}/market_returns_daily.parquet")
     if 'pf_daily' in globals() and pf_daily is not None:
-        pf_daily.filter(pl.col('date') <= settings['end_date']).write_csv(f"{output_path}/pfs_daily.csv")
+        pf_daily.filter(pl.col('date') <= settings['end_date']).write_parquet(f"{output_path}/pfs_daily.parquet")
     if 'hml_daily' in globals() and hml_daily is not None:
-        hml_daily.filter(pl.col('date') <= settings['end_date']).write_csv(f"{output_path}/hml_daily.csv")
+        hml_daily.filter(pl.col('date') <= settings['end_date']).write_parquet(f"{output_path}/hml_daily.parquet")
     if 'lms_daily' in globals() and lms_daily is not None:
-        lms_daily.filter(pl.col('date') <= settings['end_date']).write_csv(f"{output_path}/lms_daily.csv")
+        lms_daily.filter(pl.col('date') <= settings['end_date']).write_parquet(f"{output_path}/lms_daily.parquet")
     if 'cluster_pfs_daily' in globals() and cluster_pfs_daily is not None:
-        cluster_pfs_daily.filter(pl.col('date') <= settings['end_date']).write_csv(f"{output_path}/clusters_daily.csv")
+        cluster_pfs_daily.filter(pl.col('date') <= settings['end_date']).write_parquet(f"{output_path}/clusters_daily.parquet")
 
 if settings['ind_pf']:
     if 'gics_returns' in globals() and gics_returns is not None:
-        gics_returns.filter(pl.col('eom') <= settings['end_date']).write_csv(f"{output_path}/industry_gics.csv")
+        gics_returns.filter(pl.col('eom') <= settings['end_date']).write_parquet(f"{output_path}/industry_gics.parquet")
     if 'ff49_returns' in globals() and ff49_returns is not None:
-        ff49_returns.filter(pl.col('eom') <= settings['end_date']).write_csv(f"{output_path}/industry_ff49.csv")
+        ff49_returns.filter(pl.col('eom') <= settings['end_date']).write_parquet(f"{output_path}/industry_ff49.parquet")
 
 
 # Create directory for Regional Factors
@@ -891,8 +890,8 @@ if 'regional_pfs' in globals() and regional_pfs is not None:
     # Write regional portfolios to CSV files
     for reg in regional_pfs['region'].unique():
         filtered_df = regional_pfs.filter((pl.col('eom') <= settings['end_date']) & (pl.col('region') == reg))
-        file_path = os.path.join(reg_folder, f"{reg}.csv")
-        filtered_df.write_csv(file_path)
+        file_path = os.path.join(reg_folder, f"{reg}.parquet")
+        filtered_df.write_parquet(file_path)
 
 # Conditional block for daily regional factors
 if settings['daily_pf']:
@@ -905,8 +904,8 @@ if settings['daily_pf']:
         # Write daily regional portfolios to CSV files
         for reg in regional_pfs_daily['region'].unique():
             filtered_df_daily = regional_pfs_daily.filter((pl.col('date') <= settings['end_date']) & (pl.col('region') == reg))
-            file_path_daily = os.path.join(reg_folder_daily, f"{reg}.csv")
-            filtered_df_daily.write_csv(file_path_daily)
+            file_path_daily = os.path.join(reg_folder_daily, f"{reg}.parquet")
+            filtered_df_daily.write_parquet(file_path_daily)
 
 
 
@@ -919,8 +918,8 @@ if 'regional_clusters' in globals() and regional_clusters is not None:
     # Write regional clusters to CSV files
     for reg in regional_clusters['region'].unique():
         filtered_df = regional_clusters.filter((pl.col('eom') <= settings['end_date']) & (pl.col('region') == reg))
-        file_path = os.path.join(reg_folder, f"{reg}.csv")
-        filtered_df.write_csv(file_path)
+        file_path = os.path.join(reg_folder, f"{reg}.parquet")
+        filtered_df.write_parquet(file_path)
 
 # Conditional block for daily regional clusters
 if settings['daily_pf']:
@@ -933,8 +932,8 @@ if settings['daily_pf']:
         # Write daily regional clusters to CSV files
         for reg in regional_clusters_daily['region'].unique():
             filtered_df_daily = regional_clusters_daily.filter((pl.col('date') <= settings['end_date']) & (pl.col('region') == reg))
-            file_path_daily = os.path.join(reg_folder_daily, f"{reg}.csv")
-            filtered_df_daily.write_csv(file_path_daily)
+            file_path_daily = os.path.join(reg_folder_daily, f"{reg}.parquet")
+            filtered_df_daily.write_parquet(file_path_daily)
 
 
 
@@ -947,8 +946,8 @@ if 'lms_returns' in globals() and lms_returns is not None:
     # Write country factors to CSV files
     for exc in lms_returns['excntry'].unique():
         filtered_df = lms_returns.filter((pl.col('eom') <= settings['end_date']) & (pl.col('excntry') == exc))
-        file_path = os.path.join(cnt_folder, f"{exc}.csv")
-        filtered_df.write_csv(file_path)
+        file_path = os.path.join(cnt_folder, f"{exc}.parquet")
+        filtered_df.write_parquet(file_path)
 
 # Conditional block for daily country factors
 if settings['daily_pf']:
@@ -961,17 +960,17 @@ if settings['daily_pf']:
         # Write daily country factors to CSV files
         for exc in lms_daily['excntry'].unique():
             filtered_df_daily = lms_daily.filter((pl.col('date') <= settings['end_date']) & (pl.col('excntry') == exc))
-            file_path_daily = os.path.join(cnt_folder_daily, f"{exc}.csv")
-            filtered_df_daily.write_csv(file_path_daily)
+            file_path_daily = os.path.join(cnt_folder_daily, f"{exc}.parquet")
+            filtered_df_daily.write_parquet(file_path_daily)
 
 
 
 # Write NYSE size cutoffs to CSV
-nyse_size_cutoffs.write_csv(f"{output_path}/nyse_cutoffs.csv")
+nyse_size_cutoffs.write_parquet(f"{output_path}/nyse_cutoffs.parquet")
 
 # Write return cutoffs to CSV
-ret_cutoffs.write_csv(f"{output_path}/return_cutoffs.csv")
+ret_cutoffs.write_parquet(f"{output_path}/return_cutoffs.parquet")
 
 # Conditional block for writing daily return cutoffs
 if settings['daily_pf']:
-    ret_cutoffs_daily.write_csv(f"{output_path}/return_cutoffs_daily.csv")
+    ret_cutoffs_daily.write_parquet(f"{output_path}/return_cutoffs_daily.parquet")
