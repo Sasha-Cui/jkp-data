@@ -10,9 +10,9 @@
 
 #SBATCH --cpus-per-task=40              # Number of CPU cores per task
 
-#SBATCH --mem=200G                      # Memory per node (450 GB)
+#SBATCH --mem=600G                      # Memory per node
 
-#SBATCH --partition=day
+#SBATCH --partition=bigmem
 
 #SBATCH --time=15:00:00                # HH:MM:SS
 
