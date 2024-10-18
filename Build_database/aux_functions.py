@@ -2713,7 +2713,7 @@ def rvol(df, sfx, __min):
 
 def rmax(df, sfx, __min):
     df = (df.group_by(['id_int', 'group_number'])
-            .agg([col('ret').top_k(5).mean().alias(f'rmax5{sfx}'), 
+            .agg([col('ret').top_k(5).mean().alias(f'rmax5{sfx}'),
                   col('ret').max().alias(f'rmax1{sfx}')]))
     return df
 
@@ -2725,7 +2725,7 @@ def skew(df, sfx, __min):
 def prc_to_high(df, sfx, __min):
     df = (df.sort(['id_int', 'date'])
             .group_by(['id_int', 'group_number'])
-            .agg([(col('prc_adj').last()/ col('prc_adj').max()).alias(f'prc_highprc{sfx}'), 
+            .agg([(col('prc_adj').last()/ col('prc_adj').max()).alias(f'prc_highprc{sfx}'),
                 pl.count('prc_adj').alias('n')])
             .filter(col('n') >= __min)
             .drop('n'))
@@ -2739,7 +2739,7 @@ def capm(df, sfx, __min):
 def ami(df, sfx, __min):
     aux_1 = pl.when(col('dolvol_d') == 0).then(fl_none()).otherwise(col('dolvol_d'))
     df = (df.group_by(['id_int', 'group_number'])
-            .agg([(col('ret').abs()/aux_1 * 1e6).mean().alias(f'ami{sfx}'), 
+            .agg([(col('ret').abs()/aux_1 * 1e6).mean().alias(f'ami{sfx}'),
                   pl.count('dolvol_d').alias('n')])
             .filter(col('n') >= __min)
             .drop('n'))
@@ -2748,7 +2748,7 @@ def ami(df, sfx, __min):
 def downbeta(df, sfx, __min):
     df = (df.filter(col('mktrf') < 0)
             .group_by(['id_int', 'group_number'])
-            .agg([(pl.cov('ret_exc', 'mktrf')/pl.var('mktrf')).alias(f'betadown{sfx}'), 
+            .agg([(pl.cov('ret_exc', 'mktrf')/pl.var('mktrf')).alias(f'betadown{sfx}'),
                 pl.count('ret_exc').alias('n')])
             .filter(col('n')>=__min/2)
             .drop('n'))
@@ -2768,9 +2768,9 @@ def capm_ext(df, sfx, __min):
     exp_coskew2  = (residual_col**2).mean()**0.5 * (exp_mkt**2).mean()
 
     df = (df.group_by(['id_int', 'group_number'])
-            .agg([beta_col.cast(pl.Float64).alias(f'beta_{sfx}'),
+            .agg([beta_col.cast(pl.Float64).alias(f'beta_capm{sfx}'),
                   residual_col.std().alias(f'ivol_capm{sfx}'),
-                  residual_col.skew(bias = False).alias(f'iskew_capm{sfx}'), 
+                  residual_col.skew(bias = False).alias(f'iskew_capm{sfx}'),
                   (exp_coskew1/exp_coskew2).alias(f'coskew{sfx}')]))
     return df
 
@@ -2786,7 +2786,7 @@ def hxz4(df, sfx, __min):
     res_exp = pl.col('ret_exc').least_squares.ols('mktrf', 'smb_hxz', 'roe', 'inv', add_intercept = True, mode = 'residuals')
     df = (df.filter(col('smb_hxz').is_not_null() & col('roe').is_not_null() & col('inv').is_not_null())
             .group_by(['id_int', 'group_number'])
-            .agg(res_exp.std(ddof = 4).alias(f'ivol_hxz4{sfx}'), 
+            .agg(res_exp.std(ddof = 4).alias(f'ivol_hxz4{sfx}'),
                 res_exp.skew(bias = False).alias(f'iskew_hxz4{sfx}')))
     return df
 
@@ -2816,8 +2816,8 @@ def turnover(df, sfx, __min):
     aux_1 = pl.when(col('turnover_d').list.mean() != 0).then(col('turnover_d').list.std()/col('turnover_d').list.mean()).otherwise(fl_none())
     df = (df.group_by(['id_int', 'group_number'])
             .agg([pl.when(col('shares') != 0).then(col('tvol')/(col('shares')*1e6)).otherwise(fl_none()).alias('turnover_d')])
-            .with_columns([col('turnover_d').list.mean().alias(f'turnover{sfx}'), 
-                        aux_1.alias(f'turnover_var{sfx}'), 
+            .with_columns([col('turnover_d').list.mean().alias(f'turnover{sfx}'),
+                        aux_1.alias(f'turnover_var{sfx}'),
                         (col('turnover_d').list.len()).alias('n')])
             .filter(col('n') >= __min)
             .drop(['n', 'turnover_d']))
@@ -2825,15 +2825,17 @@ def turnover(df, sfx, __min):
 
 def mktcorr(df, sfx, __min):
     df = (df.group_by(['id_int', 'group_number'])
-            .agg([pl.count('ret_exc_3l').alias('n1'), 
-                pl.count('mkt_exc_3l').alias('n2'), 
+            .agg([pl.count('ret_exc_3l').alias('n1'),
+                pl.count('mkt_exc_3l').alias('n2'),
                 pl.corr('ret_exc_3l', 'mkt_exc_3l').alias(f'corr{sfx}')])
             .filter((col('n1')>=__min) & (col('n2')>=__min))
             .drop(['n1', 'n2']))
     return df
 
 def dimsonbeta(df, sfx, __min):
-    b1_col, b2_col, b3_col = regression_3vars_total('ret_exc', 'mktrf', 'mktrf_ld1', 'mktrf_lg1')
     df = (df.group_by(['id_int', 'group_number'])
-            .agg((b1_col + b2_col + b3_col).alias(f'beta_dimson{sfx}')))
+            .agg(coeffs = pl.col('ret_exc').least_squares.ols('mktrf', 'mktrf_ld1', 'mktrf_lg1', add_intercept = True, mode = 'coefficients'))
+            .unnest('coeffs')
+            .with_columns(pl.sum_horizontal('mktrf', 'mktrf_ld1', 'mktrf_lg1').alias(f'beta_dimson{sfx}'))
+            .select(['id_int', 'group_number', f'beta_dimson{sfx}']))
     return df
