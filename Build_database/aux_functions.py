@@ -2792,7 +2792,7 @@ def hxz4(df, sfx, __min):
 
 def zero_trades(df, sfx, __min):
     aux_1 = (pl.col('tvol') == 0).mean() * 21
-    aux_2 = pl.when(pl.col('shares') != 0).then(pl.col('tvol')/(pl.col('shares')*1e6)).otherwise(pl.lit(None).cast(pl.Float64))
+    aux_2 = pl.when(pl.col('shares') != 0).then(pl.col('tvol')/(pl.col('shares')*1e6)).otherwise(fl_none())
     aux_3 = (pl.col('turnover').rank(descending=True, method='average')/pl.count('turnover')).over('group_number')
     aux_4 = (aux_3 / 100) + pl.col('zero_trades')
     df = (df.group_by(['id_int', 'group_number'])
