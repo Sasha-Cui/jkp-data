@@ -2020,7 +2020,6 @@ def char_pf_rets():
     smb = ((col('small_high') + col('small_mid') + col('small_low')) / 3 - (col('big_high') + col('big_mid') + col('big_low')) / 3).alias('smb')
     return [lms, smb]
 
-@measure_time
 def sort_ff_style(char, freq, min_stocks_bp, min_stocks_pf, date_col, data, sf):
     print(f'Executing sort_ff_style for {char}', flush=True)
     c1 = (((col('size_grp_l').is_in(['small', 'large', 'mega'])) & (col('excntry_l') != 'USA')) | ((col('crsp_exchcd_l') == 1) | (col('comp_exchg_l') == 11) & (col('excntry_l') == 'USA'))) &\
