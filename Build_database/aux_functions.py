@@ -4,6 +4,7 @@ import polars_ols as pls
 import time
 import datetime
 import ibis
+from ibis import _
 import pyarrow as pa
 import pyarrow.parquet as pq 
 import pyarrow.feather as pf
@@ -99,22 +100,7 @@ def prihist_aux(filename, alias_itemvalue):
             .filter(col('item') == alias_itemvalue.upper())
             .select(['gvkey', col('itemvalue').alias(alias_itemvalue), 'effdate', 'thrudate']))
     return df
-def comp_dsf_aux(filename):
-    if 'comp_secd' in filename:
-        aux_exps = [pl.when(col('ajexdi') != 0).then(col('prccd') / col('ajexdi') * col('trfd')).otherwise(fl_none()).alias('ri_local'),
-                    col('prccd').alias('prc_local'),
-                    pl.when((col('prcstd') != 5)).then(col('prchd')).otherwise(fl_none()).alias('prc_high_lcl'),
-                    pl.when((col('prcstd') != 5)).then(col('prcld')).otherwise(fl_none()).alias('prc_low_lcl')]
-    if 'comp_g_secd' in filename:
-        aux_exps = [pl.when((col('ajexdi') != 0) & (col('qunit') != 0)).then((col('prccd') / col('qunit')) / col('ajexdi') * col('trfd')).otherwise(fl_none()).alias('ri_local'),
-                    pl.when(col('qunit') != 0).then(col('prccd') / col('qunit')).otherwise(fl_none()).alias('prc_local'),
-                    pl.when((col('prcstd') != 5) & (col('qunit') != 0)).then(col('prchd')/col('qunit')).otherwise(fl_none()).alias('prc_high_lcl'),
-                    pl.when((col('prcstd') != 5) & (col('qunit') != 0)).then(col('prcld')/col('qunit')).otherwise(fl_none()).alias('prc_low_lcl')]
-    df = (pl.scan_parquet(filename)
-            .select(['gvkey', 'iid', 'datadate', 'tpci', 'exchg', 'prcstd', 'curcdd',
-                     'ajexdi', 'cshtrd', 'curcddv', 'div', 'divd', 'divsp',
-                     (col('cshoc')/1e6).alias('cshoc'), *aux_exps]))
-    return df
+
 @measure_time
 def gen_raw_data_dfs():
     __firm_shares1 = pl.concat([load_firmshares_aux('Raw_tables/comp_funda.parquet'), load_firmshares_aux('Raw_tables/comp_fundq.parquet')])
@@ -123,10 +109,6 @@ def gen_raw_data_dfs():
     collect_and_write(sic_naics_na, 'Raw_data_dfs/sic_naics_na.parquet')
     sic_naics_gl = sic_naics_aux('Raw_tables/comp_g_funda.parquet')
     collect_and_write(sic_naics_gl, 'Raw_data_dfs/sic_naics_gl.parquet')
-    comp_acc_age = pl.concat([load_age_aux('Raw_tables/comp_funda.parquet'), load_age_aux('Raw_tables/comp_g_funda.parquet')])
-    collect_and_write(comp_acc_age, 'Raw_data_dfs/comp_acc_age.parquet')
-    comp_ret_age = pl.concat([load_age_aux('Raw_tables/comp_secm.parquet'), load_age_aux('Raw_tables/comp_g_secd.parquet', True)])
-    collect_and_write(comp_ret_age, 'Raw_data_dfs/comp_ret_age.parquet')
     permno0 = (pl.scan_parquet('Raw_tables/crsp_dsenames.parquet')
                 .select([col('permno').cast(pl.Int64), col('permco').cast(pl.Int64), 'namedt',
                          'nameendt', col('siccd').cast(pl.Int64).alias('sic'), col('naics').cast(pl.Int64)])
@@ -145,11 +127,6 @@ def gen_raw_data_dfs():
     collect_and_write(crsp_msedelist, 'Raw_data_dfs/crsp_msedelist.parquet')
     __sec_info = pl.concat([sec_info_aux('Raw_tables/comp_security.parquet'), sec_info_aux('Raw_tables/comp_g_security.parquet')])
     collect_and_write(__sec_info, 'Raw_data_dfs/__sec_info.parquet')
-    crsp_age = (pl.scan_parquet('Raw_tables/crsp_msf.parquet')
-                .with_columns(col('permco').cast(pl.Int64))
-                .group_by('permco')
-                .agg(crsp_first = pl.min('date')))
-    collect_and_write(crsp_age, 'Raw_data_dfs/crsp_age.parquet')
     crsp_mcti_t30ret = (pl.scan_parquet('Raw_tables/crsp_mcti.parquet')
                         .select(['caldt','t30ret']))
     collect_and_write(crsp_mcti_t30ret, 'Raw_data_dfs/crsp_mcti_t30ret.parquet')
@@ -174,10 +151,6 @@ def gen_raw_data_dfs():
                             col('ajexm').alias('ajexdi'), 'cshom', 'csfsm', 'cshoq', 'ajexm', 'dvpsxm', 'cshtrm', 'curcddvm',
                             pl.when(col('trfm') != 0).then(col('prccm') / col('ajexm') * col('trfm')).otherwise(fl_none()).alias('ri_local')]))
     collect_and_write(__comp_secm1, 'Raw_data_dfs/__comp_secm1.parquet')
-    __comp_dsf_na = comp_dsf_aux('Raw_tables/comp_secd.parquet')
-    collect_and_write(__comp_dsf_na, 'Raw_data_dfs/__comp_dsf_na.parquet')
-    __comp_dsf_global = comp_dsf_aux('Raw_tables/comp_g_secd.parquet')
-    collect_and_write(__comp_dsf_global, 'Raw_data_dfs/__comp_dsf_global.parquet')
     a = pl.scan_parquet('Raw_tables/comp_exrt_dly.parquet').filter(col('fromcurd') == 'GBP')
     b = pl.scan_parquet('Raw_tables/comp_exrt_dly.parquet').filter(col('tocurd') == 'USD')
     __fx1 = (a.join(b, how = 'inner', on = ['fromcurd', 'datadate'], suffix = '_b')
@@ -336,32 +309,6 @@ def compustat_fx():
                .sort(['curcdd', 'datadate']))
     return __fx1.collect()
 
-@measure_time
-def gen_comp_dsf():
-    fx = compustat_fx().lazy()
-    fx_div = fx.clone().rename({'fx': 'fx_div'}).lazy()
-    __comp_dsf_global = pl.scan_parquet('Raw_data_dfs/__comp_dsf_global.parquet')
-    aux = pl.scan_parquet('__firm_shares2.parquet').select(['ddate','gvkey','csho_fund','ajex_fund'])
-    __comp_dsf = (pl.scan_parquet('Raw_data_dfs/__comp_dsf_na.parquet')
-                    .join(aux, how = 'left', left_on = ['gvkey', 'datadate'], right_on = ['gvkey', 'ddate'])
-                    .with_columns(cshoc  = pl.coalesce(['cshoc', pl.when(col('ajexdi') != 0).then(col('csho_fund')*col('ajex_fund')/col('ajexdi')).otherwise(fl_none())]),
-                                  cshtrd = adj_trd_vol_NASDAQ('datadate', 'cshtrd', 'exchg', 14))
-                    .drop(['csho_fund','ajex_fund']))
-    __comp_dsf = (pl.concat([__comp_dsf, __comp_dsf_global.select(__comp_dsf.collect_schema().names())], how = 'vertical_relaxed')
-                    .join(fx, how = 'left', on = ['datadate', 'curcdd']) #fx datadate in our terminology is the same as date in the SAS code
-                    .join(fx_div, how = 'left', left_on = ['datadate', 'curcddv'], right_on = ['datadate', 'curcdd'])
-                    .with_columns(prc      = col('prc_local')    * col('fx'),
-                                  prc_high = col('prc_high_lcl') * col('fx'),
-                                  prc_low  = col('prc_low_lcl')  * col('fx'),
-                                  ri       = col('ri_local')     * col('fx'))
-                    .with_columns(me       = col('prc') * col('cshoc'),
-                                  dolvol   = col('prc') * col('cshtrd'),
-                                  div_tot  = pl.coalesce(['div'  , 0]) * col('fx_div'),
-                                  div_cash = pl.coalesce(['divd' , 0]) * col('fx_div'),
-                                  div_spc  = pl.coalesce(['divsp', 0]) * col('fx_div'),
-                                  eom      = col('datadate').dt.month_end())
-                    .drop(['div', 'divd', 'divsp', 'fx_div', 'curcddv', 'prc_high_lcl', 'prc_low_lcl']))
-    __comp_dsf.collect(streaming=True).write_parquet('__comp_dsf.parquet')
 def adj_trd_vol_NASDAQ(datevar, col_to_adjust, exchg_var, exchg_val):
     c1 = col(exchg_var) == exchg_val
     c2 = col(datevar)   <  pl.datetime(2001, 2, 1)
@@ -374,34 +321,121 @@ def adj_trd_vol_NASDAQ(datevar, col_to_adjust, exchg_var, exchg_val):
     return adj_trd_vol
 
 @measure_time
-def gen_comp_msf():
-    col_names_aux  = ['prc_highm','prc_lowm','div_totm','div_cashm','div_spcm','cshtrm']
-    set_aux_cols   = [pl.when(col('ajexdi') != 0).then(pl.max_horizontal('prc', 'prc_high') / col('ajexdi')).otherwise(fl_none()).alias('aux1'),
-                      pl.when(col('ajexdi') != 0).then(pl.max_horizontal('prc', 'prc_low')  / col('ajexdi')).otherwise(fl_none()).alias('aux2')]
-    set_aux_cols  += [safe_div(var, 'ajexdi', f'aux{i+1}') for var, i in zip(['div_tot', 'div_cash', 'div_spc', 'cshtrd'], range(2, 6))]
-    set_aux_cols2  = [col('aux1').max().over(['gvkey', 'iid', 'eom']), col('aux2').min().over(['gvkey', 'iid', 'eom'])]
-    set_aux_cols2 += [col(f'aux{i+1}').sum().over(['gvkey', 'iid', 'eom']) for i in range(2, 6)]
-    set_aux_cols3  = [pl.sum('dolvol').over(['gvkey', 'iid', 'eom']).alias('dolvolm')]
-    set_aux_cols3 += [(col(f'aux{j+1}') * col('ajexdi')).alias(i) for i, j in zip(col_names_aux, range(6))]
-    cols_to_drop_aux = ['cshtrd', 'div_tot', 'div_cash','div_spc', 'dolvol', 'prc_high', 'prc_low']  + [f'aux{i+1}' for i in range(6)]
-    dict_aux = {'div_totm': 'div_tot', 'div_cashm': 'div_cash', 'div_spcm': 'div_spc', 'dolvolm': 'dolvol', 'prc_highm': 'prc_high', 'prc_lowm': 'prc_low'}
-    __comp_msf = (pl.scan_parquet('__comp_dsf.parquet')
-                    .with_columns(set_aux_cols)
-                    .with_columns(set_aux_cols2)
-                    .with_columns(set_aux_cols3)
-                    .drop(cols_to_drop_aux)
-                    .filter((col('prc_local').is_not_null()) & (col('curcdd').is_not_null()) & (col('prcstd').is_in([3, 4, 10])))
-                    .rename(dict_aux)
-                    .sort(['gvkey', 'iid', 'eom', 'datadate'])
-                    .group_by(['gvkey', 'iid', 'eom']).last()
-                    .with_columns(source    = pl.lit(1).cast(pl.Int32),
-                                  exchg     = col('exchg').cast(pl.Int32),
-                                  prcstd    = col('prcstd').cast(pl.Int32)))
-    aux_ajexm_exp = pl.when(col('ajexm') != 0).then(col('csho_fund') * col('ajex_fund') / col('ajexm')).otherwise(fl_none())
-    __comp_secm = pl.scan_parquet('Raw_data_dfs/__comp_secm1.parquet')
+def gen_comp_dsf():
+    con = ibis.duckdb.connect('aux_comp_dsf.ddb', threads = os.cpu_count())    
+    
+    compustat_fx().write_parquet('fx_data.parquet')
+    con.create_table('comp_g_secd'   , con.read_parquet('Raw_tables/comp_g_secd.parquet'))
+    con.create_table('__firm_shares2', con.read_parquet('__firm_shares2.parquet')        )
+    con.create_table('comp_secd'     , con.read_parquet('Raw_tables/comp_secd.parquet')  )
+    con.create_table('fx'            , con.read_parquet('fx_data.parquet')               )
+    con.raw_sql("""
+    CREATE TABLE __comp_dsf_global AS
+    SELECT 
+        gvkey, iid, datadate, tpci, exchg, prcstd, curcdd, prccd / qunit AS prc_local, ajexdi, cshoc / 1e6 AS cshoc,
+        CASE 
+            WHEN prcstd != 5 THEN prchd / qunit 
+            ELSE NULL 
+        END AS prc_high_lcl,
+        CASE 
+            WHEN prcstd != 5 THEN prcld / qunit 
+            ELSE NULL 
+        END AS prc_low_lcl,
+        cshtrd, (prccd / qunit) / ajexdi * trfd AS ri_local,
+        curcddv, div, divd, divsp
+    FROM comp_g_secd;
+    
+    CREATE TABLE __comp_dsf_na AS
+    SELECT 
+        a.gvkey, a.iid, a.datadate, a.tpci, a.exchg, a.prcstd, a.curcdd, a.prccd AS prc_local, a.ajexdi,
+        CASE 
+            WHEN a.prcstd != 5 THEN a.prchd 
+            ELSE NULL 
+        END AS prc_high_lcl,
+        CASE 
+            WHEN a.prcstd != 5 THEN a.prcld 
+            ELSE NULL 
+        END AS prc_low_lcl,
+        a.cshtrd, COALESCE(a.cshoc / 1e6, b.csho_fund * b.ajex_fund / a.ajexdi) AS cshoc,
+        (a.prccd / a.ajexdi * a.trfd) AS ri_local, a.curcddv, a.div, a.divd, a.divsp
+    FROM comp_secd AS a
+    LEFT JOIN __firm_shares2 AS b
+    ON a.gvkey = b.gvkey AND a.datadate = b.ddate;
+    
+    UPDATE __comp_dsf_na
+    SET cshtrd = 
+        CASE 
+            WHEN datadate <  DATE '2001-02-01' THEN cshtrd / 2
+            WHEN datadate <= DATE '2001-12-31' THEN cshtrd / 1.8
+            WHEN datadate <  DATE '2003-12-31' THEN cshtrd / 1.6
+            ELSE cshtrd
+        END
+    WHERE exchg = 14;
+    
+    CREATE TABLE __comp_dsf1 AS
+    SELECT * 
+    FROM __comp_dsf_na
+    FULL OUTER JOIN __comp_dsf_global
+    USING (gvkey, iid, datadate, tpci, exchg, prcstd, curcdd, prc_local, ajexdi, prc_high_lcl, prc_low_lcl, cshtrd, cshoc, ri_local, curcddv, div, divd, divsp);
+    
+    CREATE TABLE __comp_dsf2 AS
+    SELECT a.*, b.fx AS fx, c.fx AS fx_div
+    FROM __comp_dsf1 AS a
+    LEFT JOIN fx AS b
+        ON a.curcdd = b.curcdd AND a.datadate = b.datadate
+    LEFT JOIN fx AS c
+        ON a.curcddv = c.curcdd AND a.datadate = c.datadate;
+    
+    CREATE TABLE __comp_dsf3 AS
+    SELECT 
+        *, 
+        prc_local    * fx AS prc,
+        prc_high_lcl * fx AS prc_high,
+        prc_low_lcl  * fx AS prc_low,
+        (prc_local   * fx) * cshoc AS me,
+        cshtrd       * (prc_local * fx) AS dolvol,
+        ri_local     * fx AS ri,
+        COALESCE(div, 0)   * fx_div AS div_tot,
+        COALESCE(divd, 0)  * fx_div AS div_cash,
+        COALESCE(divsp, 0) * fx_div AS div_spc
+                
+    FROM __comp_dsf2;
+    
+    """)
+    
+    t = con.table('__comp_dsf3').drop(['div', 'divd', 'divsp', 'fx_div', 'curcddv', 'prc_high_lcl', 'prc_low_lcl'])
+    write_parquet_batches(t, '__comp_dsf.parquet', 1_000_000)
+    con.disconnect()
+
+def gen_secd_data():
+    os.system('rm -f aux_msf.ddb')
+    con = ibis.duckdb.connect('aux_msf.ddb', threads = os.cpu_count())
+    table = con.read_parquet('__comp_dsf.parquet')
+    window = ibis.window(group_by=['gvkey', 'iid', 'eom'], order_by='datadate')
+    new_table = (table.mutate(
+                              prc_highm = ibis.greatest((_.prc/_.ajexdi).max().over(window),(_.prc_high/_.ajexdi).max().over(window)) * _.ajexdi,
+                              prc_lowm  = ibis.least(   (_.prc/_.ajexdi).min().over(window),(_.prc_low /_.ajexdi).min().over(window)) * _.ajexdi,
+                              div_totm  = (_.div_tot/_.ajexdi ).sum().over(window) * _.ajexdi,
+                              div_cashm = (_.div_cash/_.ajexdi).sum().over(window) * _.ajexdi,
+                              div_spcm  = (_.div_spc/_.ajexdi ).sum().over(window) * _.ajexdi,
+                              cshtrm    = (_.cshtrd/_.ajexdi  ).sum().over(window) * _.ajexdi,
+                              dolvolm   = _.dolvol.sum().over(window),
+                              source    = 1
+                             )
+                      .filter((_.prc_local.notnull()) & (_.curcdd.notnull()) & (_.prcstd.isin([3, 4, 10])))
+                      .drop(['cshtrd', 'div_tot', 'div_cash', 'div_spc', 'dolvol', 'prc_high', 'prc_low'])
+                      .rename({'div_tot': 'div_totm', 'div_cash': 'div_cashm', 'div_spc': 'div_spcm', 'dolvol': 'dolvolm', 'prc_high': 'prc_highm', 'prc_low': 'prc_lowm'})
+                      .order_by(['gvkey', 'iid', 'eom', 'datadate'])
+                      .distinct(on = ['gvkey', 'iid', 'eom'], keep = 'last')
+                )
+    write_parquet_batches(new_table, 'secd_data.parquet')
+    con.disconnect()
+def gen_secm_data():
     fx = compustat_fx().lazy()
     fx_div = fx.clone().with_columns(col('fx').alias('fx_div')).drop('fx')
-    aux = pl.scan_parquet('__firm_shares2.parquet')
+    __comp_secm = pl.scan_parquet('Raw_data_dfs/__comp_secm1.parquet').with_columns([col(var).cast(pl.Float64) for var in ['prc_local', 'prc_high', 'prc_low', 'ajexdi', 'cshom', 'csfsm', 'cshoq', 'ajexm', 'dvpsxm', 'cshtrm']])
+    aux = pl.scan_parquet('__firm_shares2.parquet').with_columns([col(var).cast(pl.Float64) for var in ['csho_fund', 'ajex_fund']])
+    aux_ajexm_exp = pl.when(col('ajexm') != 0).then(col('csho_fund') * col('ajex_fund') / col('ajexm')).otherwise(fl_none())
     __comp_secm = (__comp_secm.join(aux, how = 'left', left_on = ['gvkey', 'datadate'], right_on = ['gvkey', 'ddate'])
                               .join(fx, how = 'left', on = ['datadate', 'curcdd']) #fx datadate in our terminology is the same as date in Theis' code
                               .join(fx_div, how = 'left', left_on = ['datadate', 'curcddvm'], right_on = ['datadate', 'curcdd'])
@@ -409,7 +443,7 @@ def gen_comp_msf():
                                             cshoc    = pl.coalesce(col('cshom') / 1e6, col('csfsm') / 1e3, col('cshoq'), aux_ajexm_exp),
                                             chstrm   = adj_trd_vol_NASDAQ('datadate', 'cshtrm', 'exchg', 14),
                                             fx       = pl.when(col('curcdd') == 'USD').then(pl.lit(1)).otherwise(col('fx')),
-                                            fx_div   = pl.when(col('curcddvm') == 'USD').then(pl.lit(1)).otherwise(col('fx_div')).alias('fx_div'))
+                                            fx_div   = pl.when(col('curcddvm') == 'USD').then(pl.lit(1)).otherwise(col('fx_div')))
                               .with_columns(prc      = col('prc_local') * col('fx'),
                                             prc_high = col('prc_high')  * col('fx'),
                                             prc_low  = col('prc_low')   * col('fx'),
@@ -422,13 +456,25 @@ def gen_comp_msf():
                                             prcstd   = pl.lit(10).cast(pl.Int32),
                                             source   = pl.lit(2).cast(pl.Int32),
                                             exchg    = col('exchg').cast(pl.Int32)))
-    common_vars = ['gvkey', 'iid', 'datadate', 'eom', 'tpci', 'exchg', 'curcdd', 'prc_local', 'prc_high', 'prc_low', 'ajexdi', 'cshoc', 'ri_local', 'fx', 'prc', 'me', 'cshtrm', 'dolvol', 'ri', 'div_tot', 'div_cash', 'div_spc', 'prcstd', 'source']
-    __comp_msf = (pl.concat([__comp_msf.select(common_vars), __comp_secm.select(common_vars)], how = 'vertical_relaxed')
-                    .sort('source')
-                    .unique(subset = ['gvkey', 'iid', 'eom'], keep = 'first')
-                    .drop('source')
-                    .sort(['gvkey', 'iid', 'eom']))
-    __comp_msf.collect().write_parquet('__comp_msf.parquet')
+    __comp_secm.collect().write_parquet('secm_data.parquet')
+@measure_time
+def gen_comp_msf():
+    gen_secd_data()
+    gen_secm_data()
+    common_vars = ['gvkey', 'iid', 'datadate', 'eom', 'tpci', 'exchg', 'curcdd', 'prc_local', 'prc_high', 'prc_low', 'ajexdi', 'cshoc', 'ri_local', 'fx', 'prc', 'me', 'cshtrm', 'dolvol', 'ri', 'div_tot', 'div_cash', 'div_spc', 'prcstd', 'source'] 
+    os.system('rm -f aux_msf.ddb')
+    con = ibis.duckdb.connect('aux_msf.ddb', threads = os.cpu_count())
+    secd = con.read_parquet('secd_data.parquet').select(common_vars)
+    secm = con.read_parquet('secm_data.parquet').select(common_vars)
+    window = ibis.window(group_by=['gvkey', 'iid', 'eom'], order_by='datadate')
+    __comp_msf = (secd.union(secm)
+                      .mutate(n = _.gvkey.count().over(window))
+                      .filter([(_.n == 1) | ((_.n == 2) & (_.source == 1))])
+                      .drop(['n', 'source'])
+                      .distinct(on = ['gvkey', 'iid', 'eom'])
+                  )
+    write_parquet_batches(__comp_msf, '__comp_msf.parquet')
+    con.disconnect()
 
 @measure_time
 def comp_exchanges():
@@ -467,14 +513,15 @@ def comp_exchanges():
 
 @measure_time
 def add_primary_sec(data_path, datevar, file_name):
-    con = ibis.duckdb.connect(threads = os.cpu_count())
-    
+    os.system('rm -f aux_prim_sec.ddb')
+    con = ibis.duckdb.connect('aux_prim_sec.ddb', threads = os.cpu_count())
+
     data       = con.read_parquet(data_path)
     prihistrow = con.read_parquet('Raw_data_dfs/__prihistrow.parquet')
     prihistusa = con.read_parquet('Raw_data_dfs/__prihistusa.parquet')
     prihistcan = con.read_parquet('Raw_data_dfs/__prihistcan.parquet')
     header     = con.read_parquet('Raw_data_dfs/__header.parquet')
-    
+
     data = (data.join(prihistrow, how = 'left',
                       predicates = [
                                     data.gvkey == prihistrow.gvkey,
@@ -509,10 +556,8 @@ def add_primary_sec(data_path, datevar, file_name):
                          )
                  .cast({'primary_sec': 'int'})
     )
-    
     write_parquet_batches(data, file_name)
     con.disconnect()
-
     
 def load_rf_and_exchange_data():
     crsp_mcti = (pl.read_parquet('Raw_data_dfs/crsp_mcti_t30ret.parquet')
@@ -524,7 +569,7 @@ def load_rf_and_exchange_data():
     __exchanges = comp_exchanges()
     return crsp_mcti, ff_factors_monthly, __exchanges
 def gen_returns_df(freq):
-    ret_lag_dif_exp = (gen_MMYY_column('datadate') - gen_MMYY_column('datadate', 1)).over(['gvkey','iid']) if freq == 'm' else (col('datadate') -col('datadate').shift(1)).over(['gvkey','iid'])
+    ret_lag_dif_exp = (gen_MMYY_column('datadate') - gen_MMYY_column('datadate', 1)).over(['gvkey','iid']) if freq == 'm' else (col('datadate') - col('datadate').shift(1)).over(['gvkey','iid'])
     base = pl.scan_parquet(f'__comp_{freq}sf.parquet')
     __returns = (base.filter((col('ri').is_not_null()) & (col('prcstd').is_in([3, 4, 10])))
                      .select(['gvkey','iid','datadate','ri','ri_local','prcstd','curcdd'])
@@ -593,6 +638,8 @@ def add_MMYY_column_drop_original(df, var): return df.with_columns(merge_aux = g
 def prepare_crsp_sf(freq):
     merge_vars = ['permno', 'merge_aux'] if (freq == 'm') else ['permno', 'date']
     __crsp_sf = (pl.scan_parquet(f'Raw_data_dfs/__crsp_sf_{freq}.parquet')
+                   .with_columns([col(var).cast(pl.Float64) for var in ['prc', 'ret', 'retx', 'prc_high', 'prc_low']] +\
+                                 [col('vol').cast(pl.Int64)])
                    .with_columns(adj_trd_vol_NASDAQ('date', 'vol', 'exchcd', 3))
                    .sort(['permno', 'date'])
                    .with_columns(dolvol = col('prc').abs() * col('vol'),
@@ -1041,17 +1088,17 @@ def quarterize(df, var_list):
     list_aux2 = [pl.when(col('count_aux') == 1).then(col(var)).otherwise(col(var + '_q')).alias(var + '_q') for var in var_list] +\
                 [pl.when(col('count_aux') == 1).then(c1).otherwise(c2).alias('del')]
     list_aux3 = [pl.when(col('del')).then(fl_none()).otherwise(col(var + '_q')).alias(var + '_q') for var in var_list]
-    df = (df.sort(['gvkey','fyr','fyearq','fqtr'])
+    df = (df.sort(['gvkey','fyr','fyearq','fqtr', 'n'])
             .unique(['gvkey','fyr','fyearq','fqtr'], keep = 'first')
-            .sort(['gvkey','fyr','fyearq','fqtr'])
+            .sort(['gvkey','fyr','fyearq','fqtr', 'n'])
             .with_columns(list_aux1)
-            .sort(['gvkey','fyr','fyearq','fqtr'])
+            .sort(['gvkey','fyr','fyearq','fqtr', 'n'])
             .with_columns(list_aux2)
             .with_columns(list_aux3)
             .drop(['del', 'count_aux'])
-            .sort(['gvkey','fyr','fyearq','fqtr'])
+            .sort(['gvkey','fyr','fyearq','fqtr', 'n'])
             .unique(['gvkey','fyr','fyearq','fqtr'], keep = 'first')
-            .sort(['gvkey','fyr','fyearq','fqtr']))
+            .sort(['gvkey','fyr','fyearq','fqtr', 'n']))
     return df
 def ttm(var): return col(var) + col(var).shift(1) + col(var).shift(2) + col(var).shift(3)
 def cumulate_4q(var_yrl, mode = 'add'):
@@ -1071,6 +1118,7 @@ def load_raw_fund_table_and_filter(filename, start_date, source_str, mode):
     datafmt_val = 'HIST_STD' if mode == 1 else 'STD'
     popsrc_val  = 'I'        if mode == 1 else 'D'
     df = (pl.scan_parquet(filename)
+            .with_columns(n = pl.cum_count('gvkey'))
             .filter( c1                              &
                     (col('datafmt') == datafmt_val)  &
                     (col('popsrc')  == popsrc_val)   &
@@ -1104,14 +1152,14 @@ def load_mkt_equity_data(filename, alias = True):
     return df
 
 @measure_time
-def standardized_accounting_data(coverage,convert_to_usd, me_data_path,include_helpers_vars, start_date):
+def standardized_accounting_data(coverage, convert_to_usd, me_data_path, include_helpers_vars, start_date):
     g_fundq_cols = pl.scan_parquet('Raw_tables/comp_g_fundq.parquet').collect_schema().names()
-    fundq_cols = pl.scan_parquet('Raw_tables/comp_fundq.parquet').collect_schema().names()
+    fundq_cols   = pl.scan_parquet('Raw_tables/comp_fundq.parquet'  ).collect_schema().names()
     #Compustat Accounting Vars to Extract
     avars_inc = ['sale', 'revt', 'gp', 'ebitda', 'oibdp', 'ebit', 'oiadp', 'pi', 'ib', 'ni', 'mii','cogs', 'xsga', 'xopr', 'xrd', 'xad', 'xlr', 'dp', 'xi', 'do', 'xido', 'xint', 'spi', 'nopi', 'txt','dvt']
-    avars_cf = ['oancf', 'ibc', 'dpc', 'xidoc', 'capx', 'wcapt', # Operating
+    avars_cf  = ['oancf', 'ibc', 'dpc', 'xidoc', 'capx', 'wcapt', # Operating
     'fincf', 'fiao', 'txbcof', 'ltdch', 'dltis', 'dltr', 'dlcch', 'purtshr', 'prstkc', 'sstk','dv', 'dvc'] # Financing
-    avars_bs = ['at', 'act', 'aco', 'che', 'invt', 'rect', 'ivao', 'ivst', 'ppent', 'ppegt', 'intan', 'ao', 'gdwl', 're', # Assets
+    avars_bs  = ['at', 'act', 'aco', 'che', 'invt', 'rect', 'ivao', 'ivst', 'ppent', 'ppegt', 'intan', 'ao', 'gdwl', 're', # Assets
     'lt', 'lct', 'dltt', 'dlc', 'txditc', 'txdb', 'itcb', 'txp', 'ap', 'lco', 'lo', 'seq', 'ceq', 'pstkrv', 'pstkl', 'pstk', 'mib', 'icapt'] # Liabilities
     # Variables in avars_other are not measured in currency units, and only available in annual data
     avars_other = ['emp']
@@ -1128,7 +1176,7 @@ def standardized_accounting_data(coverage,convert_to_usd, me_data_path,include_h
         query_vars = [var for var in (avars + avars_other) if var not in vars_not_in_query]
         g_funda = load_raw_fund_table_and_filter('Raw_tables/comp_g_funda.parquet', start_date, 'GLOBAL', 1)
         __gfunda = (g_funda.with_columns(ni = (col('ib') + pl.coalesce('xi', 0) + pl.coalesce('do', 0)).cast(pl.Float64))
-                           .select(['gvkey', 'datadate', 'indfmt', 'curcd', 'source', 'ni'] +\
+                           .select(['gvkey', 'datadate', 'n', 'indfmt', 'curcd', 'source', 'ni'] +\
                                    [fl_none().alias(i) for i in ['gp', 'pstkrv', 'pstkl', 'itcb', 'xad', 'txbcof']] +\
                                    query_vars)
                            .pipe(apply_indfmt_filter))
@@ -1138,7 +1186,7 @@ def standardized_accounting_data(coverage,convert_to_usd, me_data_path,include_h
         g_fundq = load_raw_fund_table_and_filter('Raw_tables/comp_g_fundq.parquet', start_date, 'GLOBAL', 1)
         __gfundq = (g_fundq.with_columns(niq    = (col('ibq') + pl.coalesce('xiq', 0.)).cast(pl.Float64),
                                          ppegtq = (col('ppentq') + col('dpactq')).cast(pl.Float64))
-                           .select(['gvkey', 'datadate', 'indfmt', 'fyr', 'fyearq', 'fqtr', 'curcdq', 'source', 'niq', 'ppegtq'] +\
+                           .select(['gvkey', 'datadate', 'n', 'indfmt', 'fyr', 'fyearq', 'fqtr', 'curcdq', 'source', 'niq', 'ppegtq'] +\
                                    [fl_none().alias(i) for i in ['icaptq', 'niy', 'txditcq', 'txpq', 'xidoq', 'xidoy', 'xrdq', 'xrdy', 'txbcofy']] +\
                                    query_vars)
                            .pipe(apply_indfmt_filter))
@@ -1147,14 +1195,14 @@ def standardized_accounting_data(coverage,convert_to_usd, me_data_path,include_h
         vars_not_in_query = ['wcapt', 'ltdch', 'purtshr']
         query_vars = [var for var in (avars + avars_other) if var not in vars_not_in_query]
         funda = load_raw_fund_table_and_filter('Raw_tables/comp_funda.parquet', start_date, 'NA', 2)
-        __funda = funda.select(['gvkey', 'datadate', 'curcd', 'source'] +\
+        __funda = funda.select(['gvkey', 'datadate', 'n', 'curcd', 'source'] +\
                                [fl_none().alias(i) for i in ['wcapt', 'ltdch', 'purtshr']] +\
                                query_vars)
         #Quarterly north american data:
         vars_not_in_query = ['dvtq','gpq','dvty','gpy','ltdchy','purtshry','wcapty']
         query_vars = [var for var in qvars if var not in vars_not_in_query]
         fundq = load_raw_fund_table_and_filter('Raw_tables/comp_fundq.parquet', start_date, 'NA', 2)
-        __fundq = fundq.select(['gvkey', 'datadate', 'fyr', 'fyearq', 'fqtr', 'curcdq', 'source'] +\
+        __fundq = fundq.select(['gvkey', 'datadate', 'n', 'fyr', 'fyearq', 'fqtr', 'curcdq', 'source'] +\
                                [fl_none().alias(i) for i in ['dvtq','gpq','dvty','gpy','ltdchy','purtshry','wcapty']] +\
                                query_vars)
     if coverage == 'world': __wfunda, __wfundq = pl.concat([__gfunda, __funda], how = 'diagonal_relaxed'), pl.concat([__gfundq, __fundq], how = 'diagonal_relaxed')
@@ -1168,15 +1216,15 @@ def standardized_accounting_data(coverage,convert_to_usd, me_data_path,include_h
         __compa = add_fx_and_convert_vars(aname, fx, avars, 'annual')
         __compq = add_fx_and_convert_vars(qname, fx, qvars, 'quarterly')
     else: __compa, __compq = aname, qname
+
     __me_data = load_mkt_equity_data(me_data_path)
 
     yrl_vars = ['cogsq', 'xsgaq', 'xintq', 'dpq', 'txtq', 'xrdq', 'dvq', 'spiq', 'saleq', 'revtq', 'xoprq', 'oibdpq', 'oiadpq', 'ibq', 'niq', 'xidoq', 'nopiq', 'miiq', 'piq', 'xiq','xidocq', 'capxq', 'oancfq', 'ibcq', 'dpcq', 'wcaptq','prstkcq', 'sstkq', 'purtshrq','dsq', 'dltrq', 'ltdchq', 'dlcchq','fincfq', 'fiaoq', 'txbcofq', 'dvtq']
     bs_vars = ['seqq', 'ceqq', 'pstkq', 'icaptq', 'mibq', 'gdwlq', 'req','atq', 'actq', 'invtq', 'rectq', 'ppegtq', 'ppentq', 'aoq', 'acoq', 'intanq', 'cheq', 'ivaoq', 'ivstq', 'ltq', 'lctq', 'dlttq', 'dlcq', 'txpq', 'apq', 'lcoq', 'loq', 'txditcq', 'txdbq']
     __compq = (__compq.with_columns([col(var).cast(pl.Int64) for var in ['fyr', 'fyearq', 'fqtr'] if var in __compq.collect_schema().names()])
                       .pipe(quarterize, var_list = qvars_y)
-                      .sort(['gvkey', 'fyr', 'fyearq', 'fqtr'])
-                      .unique(['gvkey', 'fyr', 'fyearq', 'fqtr'], keep='first')
-                      .sort(['gvkey', 'fyr', 'fyearq', 'fqtr']))
+              )
+
     __compq = (__compq.with_columns([pl.coalesce([f'{var[:-1]}q', f'{var[:-1]}y_q']).alias(f'{var[:-1]}q') for var in qvars_y if f'{var[:-1]}q' in __compq.collect_schema().names()] +\
                                     [col(f'{var[:-1]}y_q').alias(f'{var[:-1]}q') for var in qvars_y if f'{var[:-1]}q' not in __compq.collect_schema().names()])
                       .drop([f'{var[:-1]}y_q' for var in qvars_y])
@@ -1185,32 +1233,32 @@ def standardized_accounting_data(coverage,convert_to_usd, me_data_path,include_h
                                     ocf_qtr  = pl.coalesce(['oancfq', (col('ibq') + col('dpq') - pl.coalesce([col('wcaptq'), 0]))]),
                                     dsy      = fl_none(),
                                     dsq      = fl_none())
-                      .sort(['gvkey', 'fyr', 'fyearq', 'fqtr'])
+                      .sort(['gvkey', 'fyr', 'fyearq', 'fqtr', 'n'])
                       .with_columns([cumulate_4q(var_yrl) for var_yrl in yrl_vars])
                       .drop([a for b in [cumulate_4q(var_yrl, 'drop_cols') for var_yrl in yrl_vars] for a in b])
                       .rename({**dict(zip(bs_vars, list(aux[:-1] for aux in bs_vars))), **{'curcdq': 'curcd'}})
-                      .sort(['gvkey', 'datadate', 'fyr', 'fqtr'])
+                      .sort(['gvkey', 'datadate', 'fyr', 'n'])
                       .unique(['gvkey','datadate', 'fyr'], keep='first')
-                      .sort(['gvkey', 'datadate', 'fyr','fqtr'])
+                      .sort(['gvkey', 'datadate', 'n'])
                       .unique(['gvkey', 'datadate'], keep='last')
                       .drop(['fyr', 'fyearq', 'fqtr'])
                       .join(__me_data, how = 'left', left_on = ['gvkey', 'datadate'], right_on = ['gvkey', 'eom'])
                       .with_columns([fl_none().alias(i) for i in ['gp', 'dltis', 'do', 'dvc', 'ebit', 'ebitda', 'itcb', 'pstkl', 'pstkrv', 'xad', 'xlr', 'emp']]))
-
-    __compa = (__compa.with_columns(ni_qtr    = fl_none(),
-                                     sale_qtr = fl_none(),
-                                     ocf_qtr  = fl_none(),
-                                     fqtr     = pl.lit(None),
-                                     fyearq   = pl.lit(None),
-                                     fyr      = pl.lit(None))
+    
+    __compa = (__compa.with_columns(ni_qtr   = fl_none(),
+                                    sale_qtr = fl_none(),
+                                    ocf_qtr  = fl_none(),
+                                    fqtr     = pl.lit(None),
+                                    fyearq   = pl.lit(None),
+                                    fyr      = pl.lit(None))
                        .join(__me_data, how = 'left', left_on = ['gvkey', 'datadate'], right_on = ['gvkey', 'eom']))
 
     if include_helpers_vars==1:
         __compq = add_helper_vars(__compq)
         __compa = add_helper_vars(__compa)
-    #Do not use streaming here, gives an error. Normal collect
-    __compa.unique(['gvkey', 'datadate']).sort(['gvkey', 'datadate']).collect().write_parquet('acc_std_ann.parquet')
-    __compq.unique(['gvkey', 'datadate']).sort(['gvkey', 'datadate']).collect().write_parquet('acc_std_qtr.parquet')
+    #Do not use streaming here, gives an error. Default collect
+    __compa.sort(['gvkey', 'datadate', 'n']).unique(['gvkey', 'datadate'], keep = 'first').drop('n').sort(['gvkey', 'datadate']).collect()
+    __compq.sort(['gvkey', 'datadate', 'n']).unique(['gvkey', 'datadate'], keep = 'first').drop('n').sort(['gvkey', 'datadate']).collect()
 
 @measure_time
 def expand(data, id_vars, start_date, end_date, freq='day', new_date_name='date'):
@@ -1245,7 +1293,7 @@ def add_helper_vars(data):
     base = (dates_df.join(temp_data, left_on = sort_vars, right_on = sort_vars, how = 'left')
                     .with_columns(col('data_available').fill_null(strategy = 'zero'))
                     .select(temp_data.collect_schema().names())
-                    .sort(sort_vars)
+                    .sort(sort_vars + ['n'])
                     .unique(sort_vars, keep = 'first')
                     .sort(sort_vars)
                     .with_columns(count = col('curcd').cum_count().over(over_vars))
@@ -2014,39 +2062,66 @@ def market_chars_monthly(data_path, market_ret_path, local_currency):
                 .sort(['id','eom']))
     #DO NOT USE STREAMING HERE
     data.collect().write_parquet('market_chars_m.parquet')
-def load_age_data_and_process_dates(mode):
-    df = (pl.scan_parquet(f'Raw_data_dfs/comp_{mode}_age.parquet')
-            .group_by('gvkey')
-            .agg(col('datadate').min().alias(f'comp_{mode}_first'))
-            .sort('gvkey')
-            .with_columns(col(f'comp_{mode}_first').dt.offset_by('-1y').dt.month_end())
-            .with_columns((col(f'comp_{mode}_first').dt.year().cast(pl.Utf8) + pl.lit('-12-31')).str.strptime(pl.Date)))
-    return df
 
 @measure_time
 def firm_age(data_path):
-    crsp_age = pl.scan_parquet('Raw_data_dfs/crsp_age.parquet')
-    comp_acc_age = load_age_data_and_process_dates('acc')
-    comp_ret_age = load_age_data_and_process_dates('ret')
-    data = (pl.scan_parquet(data_path)
-              .select(['permco','gvkey','id','eom'])
-              .join(crsp_age, on = 'permco', how = 'left')
-              .join(comp_acc_age, on = 'gvkey', how = 'left')
-              .join(comp_ret_age, on = 'gvkey', how = 'left')
-              .with_columns(first_obs = pl.min_horizontal('crsp_first', 'comp_acc_first','comp_ret_first'))
-              .drop(['permco','gvkey','crsp_first','comp_acc_first', 'comp_ret_first'])
-              .with_columns(first_alt = pl.min('eom').over('id'))
-              .with_columns(aux = pl.min_horizontal('first_obs', 'first_alt'))
-              .with_columns(age = gen_MMYY_column('eom') - gen_MMYY_column('aux'))
-              .drop('aux')
-              .sort(['id','eom']))
-    data.collect(streaming = True).write_parquet('firm_age.parquet')
+    con = ibis.duckdb.connect(threads = os.cpu_count())    
+    data = con.read_parquet(data_path).select(['gvkey', 'permco', 'id', 'eom'])
+    comp_secm  = con.read_parquet('Raw_tables/comp_secm.parquet'  ).select(['gvkey', 'datadate'])
+    comp_gsecm = con.read_parquet('Raw_tables/comp_g_secd.parquet').filter(_.monthend == 1).select(['gvkey', 'datadate'])
+    comp_ret_age = (comp_secm.union(comp_gsecm)
+                              .group_by('gvkey')
+                              .agg(comp_ret_first = _.datadate.min())
+                              .mutate(comp_ret_first = ((_.comp_ret_first - ibis.interval(years=1)).year().cast('string') + "-12-31").cast('date') )
+                   )
+    comp_funda  = con.read_parquet('Raw_tables/comp_funda.parquet'  ).select(['gvkey', 'datadate'])
+    comp_gfunda = con.read_parquet('Raw_tables/comp_g_funda.parquet').select(['gvkey', 'datadate'])
+    comp_acc_age = (comp_funda.union(comp_gfunda)
+                              .group_by('gvkey')
+                              .agg(comp_acc_first = _.datadate.min())
+                              .mutate(comp_acc_first = ((_.comp_acc_first - ibis.interval(years=1)).year().cast('string') + "-12-31").cast('date') )
+                   )
+    crsp_age = (con.read_parquet('Raw_tables/crsp_msf.parquet')
+                   .group_by('permco')
+                   .agg(crsp_first = _.date.min())
+                 )
+    con.create_table('data'        , data.to_polars()        )
+    con.create_table('comp_ret_age', comp_ret_age.to_polars())
+    con.create_table('comp_acc_age', comp_acc_age.to_polars())
+    con.create_table('crsp_age'    , crsp_age.to_polars()    )
+    sql_query = """
+    CREATE TABLE age1 AS
+    SELECT 
+        a.id, 
+        a.eom, 
+        LEAST(b.crsp_first, c.comp_acc_first, d.comp_ret_first) AS first_obs
+    FROM data AS a
+    LEFT JOIN crsp_age AS b ON a.permco = b.permco
+    LEFT JOIN comp_acc_age AS c ON a.gvkey = c.gvkey
+    LEFT JOIN comp_ret_age AS d ON a.gvkey = d.gvkey;
+    
+    CREATE TABLE age2 AS
+    SELECT  *, MIN(eom) OVER (PARTITION BY id) AS first_alt
+    FROM age1;
+    
+    CREATE TABLE age3 AS
+    SELECT 
+        id, eom,
+        (DATE_PART('year', eom) - DATE_PART('year', LEAST(first_obs, first_alt))) * 12 +
+        (DATE_PART('month', eom) - DATE_PART('month', LEAST(first_obs, first_alt))) AS age
+    FROM age2
+    ORDER BY id, eom;
+    """
+    con.raw_sql(sql_query)
+    con.table('age3').to_parquet('firm_age.parquet')
+    con.disconnect()
+    
 def char_pf_rets():
     lms = ((col('small_high') + col('big_high')) / 2 - (col('small_low') + col('big_low')) / 2).alias('lms')
     smb = ((col('small_high') + col('small_mid') + col('small_low')) / 3 - (col('big_high') + col('big_mid') + col('big_low')) / 3).alias('smb')
     return [lms, smb]
 
-def sort_ff_style(char, freq, min_stocks_bp, min_stocks_pf, date_col, data, sf):
+def sort_ff_style(char, min_stocks_bp, min_stocks_pf, date_col, data, sf):
     print(f'Executing sort_ff_style for {char}', flush=True)
     c1 = (((col('size_grp_l').is_in(['small', 'large', 'mega'])) & (col('excntry_l') != 'USA')) | ((col('crsp_exchcd_l') == 1) | (col('comp_exchg_l') == 11) & (col('excntry_l') == 'USA'))) &\
          col(f'{char}_l').is_not_null()
@@ -2106,21 +2181,21 @@ def ap_factors(output_path, freq, sf_path, mchars_path, mkt_path, min_stocks_bp,
               .with_columns([pl.when(((12* (col('eom').dt.year() - col('eom').shift(1).dt.year()) +\
                                        (col('eom').dt.month() - col('eom').shift(1).dt.month()).cast(pl.Int32)).over('id') != 1)).then(pl.lit(None))
                                .otherwise(i + '_l').alias(i + '_l') for i in lag_vars])
-              .filter((col('obs_main_l') == 1)    &\
-                      (col('exch_main_l') == 1)   &\
-                      (col('common_l') == 1)      &\
+              .filter((col('obs_main_l'   ) == 1) &\
+                      (col('exch_main_l'  ) == 1) &\
+                      (col('common_l'     ) == 1) &\
                       (col('primary_sec_l') == 1) &\
-                      (col('ret_lag_dif') == 1)   &\
+                      (col('ret_lag_dif'  ) == 1) &\
                       col('me_l').is_not_null())
               .with_columns(size_pf = (pl.when(col('size_grp_l').is_null()).then(pl.lit(''))\
                                          .when(col('size_grp_l').is_in(['large', 'mega'])).then(pl.lit('big'))\
                                          .otherwise(pl.lit('small'))))
               .sort(['excntry_l', 'size_grp_l', 'eom']))
 
-    ff           = sort_ff_style('be_me' , freq, min_stocks_bp,min_stocks_pf, date_col, base, world_sf2).rename({'lms': 'hml'       , 'smb': 'smb_ff'})
+    ff           = sort_ff_style('be_me' , min_stocks_bp, min_stocks_pf, date_col, base, world_sf2).rename({'lms': 'hml'       , 'smb': 'smb_ff'})
 
-    asset_growth = sort_ff_style('at_gr1', freq, min_stocks_bp,min_stocks_pf, date_col, base, world_sf2).rename({'lms': 'at_gr1_lms', 'smb': 'at_gr1_smb'})
-    roeq         = sort_ff_style('niq_be', freq, min_stocks_bp,min_stocks_pf, date_col, base, world_sf2).rename({'lms': 'niq_be_lms', 'smb': 'niq_be_smb'})
+    asset_growth = sort_ff_style('at_gr1', min_stocks_bp, min_stocks_pf, date_col, base, world_sf2).rename({'lms': 'at_gr1_lms', 'smb': 'at_gr1_smb'})
+    roeq         = sort_ff_style('niq_be', min_stocks_bp, min_stocks_pf, date_col, base, world_sf2).rename({'lms': 'niq_be_lms', 'smb': 'niq_be_smb'})
     hxz          = (asset_growth.join(roeq, how = 'left', on = ['excntry',date_col])
                                 .select(['excntry', date_col, (-1*col('at_gr1_lms')).alias('inv'),\
                                          col('niq_be_lms').alias('roe'), ((col('at_gr1_smb') + col('niq_be_smb'))/2).alias('smb_hxz')]))
@@ -2318,7 +2393,7 @@ def bidask_hl(output_path, data_path, market_returns_daily_path, __min_obs):
     c3 = (col('id_flag') == 0) & (col('ind') == 0) & (col('prc') < col('prc_low_r'))
     c4 = (col('id_flag') == 0) & (col('ind') == 0) & (col('prc') > col('prc_high_r'))
     c5 = (col('prc_low')!= 0.) & (col('prc_high')/col('prc_low') > 8)
-    c6 = (col('prc_l1') < col('prc_low')) & (col('prc_l1') > 0)
+    c6 = (col('prc_l1') < col('prc_low'))  & (col('prc_l1') > 0)
     c7 = (col('prc_l1') > col('prc_high')) & (col('prc_l1') > 0)
     market_returns_daily = pl.scan_parquet(market_returns_daily_path)
     __dsf = (pl.scan_parquet(data_path)
