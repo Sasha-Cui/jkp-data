@@ -5,9 +5,6 @@ import time
 import datetime
 import ibis
 from ibis import _
-import pyarrow as pa
-import pyarrow.parquet as pq 
-import pyarrow.feather as pf
 import os
 from datetime import date
 from math import sqrt, exp
@@ -760,7 +757,8 @@ def gen_temp_sf(freq, crsp_df, comp_df):
 def add_obs_main_to_sf_and_write_file(freq, sf_df, obs_main):
     file_path = '__msf_world.parquet' if freq == 'm' else 'world_dsf.parquet'
     sort_vars = ['id','eom'] if freq == 'm' else ['id','date']
-    (sf_df.join(obs_main, on = ['id','eom'], how = 'left')
+    (sf_df.filter(col('eom')  >= pl.datetime(1999, 12, 31))
+          .join(obs_main, on = ['id','eom'], how = 'left')
           .unique(sort_vars)
           #.sort(sort_vars)
           .collect(streaming = True)
@@ -2074,27 +2072,27 @@ def firm_age(data_path):
     con.create_table('comp_acc_age', comp_acc_age.to_polars())
     con.create_table('crsp_age'    , crsp_age.to_polars()    )
     sql_query = """
-    CREATE TABLE age1 AS
-    SELECT 
-        a.id, 
-        a.eom, 
-        LEAST(b.crsp_first, c.comp_acc_first, d.comp_ret_first) AS first_obs
-    FROM data AS a
-    LEFT JOIN crsp_age AS b ON a.permco = b.permco
-    LEFT JOIN comp_acc_age AS c ON a.gvkey = c.gvkey
-    LEFT JOIN comp_ret_age AS d ON a.gvkey = d.gvkey;
-    
-    CREATE TABLE age2 AS
-    SELECT  *, MIN(eom) OVER (PARTITION BY id) AS first_alt
-    FROM age1;
-    
-    CREATE TABLE age3 AS
-    SELECT 
-        id, eom,
-        (DATE_PART('year', eom) - DATE_PART('year', LEAST(first_obs, first_alt))) * 12 +
-        (DATE_PART('month', eom) - DATE_PART('month', LEAST(first_obs, first_alt))) AS age
-    FROM age2
-    ORDER BY id, eom;
+                    CREATE TABLE age1 AS
+                    SELECT 
+                        a.id, 
+                        a.eom, 
+                        LEAST(b.crsp_first, c.comp_acc_first, d.comp_ret_first) AS first_obs
+                    FROM data AS a
+                    LEFT JOIN crsp_age AS b ON a.permco = b.permco
+                    LEFT JOIN comp_acc_age AS c ON a.gvkey = c.gvkey
+                    LEFT JOIN comp_ret_age AS d ON a.gvkey = d.gvkey;
+                    
+                    CREATE TABLE age2 AS
+                    SELECT  *, MIN(eom) OVER (PARTITION BY id) AS first_alt
+                    FROM age1;
+                    
+                    CREATE TABLE age3 AS
+                    SELECT 
+                        id, eom,
+                        (DATE_PART('year', eom) - DATE_PART('year', LEAST(first_obs, first_alt))) * 12 +
+                        (DATE_PART('month', eom) - DATE_PART('month', LEAST(first_obs, first_alt))) AS age
+                    FROM age2
+                    ORDER BY id, eom;
     """
     con.raw_sql(sql_query)
     con.table('age3').to_parquet('firm_age.parquet')
