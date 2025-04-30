@@ -168,14 +168,22 @@ def gen_crsp_sf(freq):
                                prc       = sf.prc.abs(),
                                shrout    = (sf.shrout / 1000),
                                me        = (sf.prc.abs() * (sf.shrout / 1000)),
-                               prc_high  = ibis.case()
-                                               .when((sf.prc > 0) & (sf.askhi > 0), sf.askhi)
-                                               .else_(ibis.null())
-                                               .end(),
-                               prc_low   = ibis.case()
-                                               .when((sf.prc > 0) & (sf.bidlo > 0), sf.bidlo)
-                                               .else_(ibis.null())
-                                               .end(),
+                            #    prc_high  = ibis.cases()
+                            #                    .when((sf.prc > 0) & (sf.askhi > 0), sf.askhi)
+                            #                    .else_(ibis.null())
+                            #                    .end(),
+                                prc_high = ibis.cases(
+                                                ((sf.prc > 0) & (sf.askhi > 0), sf.askhi),
+                                                else_=ibis.null()
+                                            ),
+                                prc_low = ibis.cases(
+                                                ((sf.prc > 0) & (sf.bidlo > 0), sf.bidlo),
+                                                else_=ibis.null()
+                                            ),          
+                            #    prc_low   = ibis.cases()
+                            #                    .when((sf.prc > 0) & (sf.bidlo > 0), sf.bidlo)
+                            #                    .else_(ibis.null())
+                            #                    .end(),
                                iid       = ccmxpf_lnkhist.liid,
                                exch_main = senames.exchcd.isin([1, 2, 3]).cast('int32'))
                         .select(['permno','permco','date'   ,'bidask'   ,'prc'     ,'shrout' ,
@@ -1570,9 +1578,8 @@ def earnings_persistence(data, __n, __min):
     exp1 = col(y).rolling_var(window_size = months, min_periods = __min)
     exp2 = col(x).rolling_var(window_size = months, min_periods = __min)
     df = (data.select(['gvkey', 'curcd', 'datadate', 'ni_x', 'at_x'])
-              .clone()
               .sort(['gvkey', 'curcd', 'datadate'])
-              .with_columns(__ni_at    = safe_div('ni_x', 'at_x', '__ni_at'),
+              .with_columns(__ni_at    = safe_div('ni_x', 'at_x', '__ni_at', 3),
                             __ni_at_l1 = safe_div('ni_x', 'at_x', '__ni_at_l1', 7))
               .sort(['gvkey','curcd','datadate'])
               .with_columns(ni_ar1     = beta.over(['gvkey','curcd']),
@@ -2000,15 +2007,16 @@ def eqnpo_cols(lag):
 def div_cols(i, spc = False):
     div_var = 'div' if (not spc) else 'divspc'
     num = col(f'{div_var}1m_me') if (i == 1) else col(f'{div_var}1m_me').rolling_sum(window_size = i, min_periods = 1)
-    return (pl.when((col('count') >= i) & (col('me') != 0)).then(num / col('me')).otherwise(fl_none())).alias(f'{div_var}{i}m_me')
+    return (pl.when((col('count') >= i) & (col('me') != 0)).then(num / col('me'))
+              .otherwise(fl_none())).alias(f'{div_var}{i}m_me')
 @measure_time
-def market_chars_monthly(data_path, market_ret_path, local_currency):
+def market_chars_monthly(data_path, market_ret_path, local_currency = False):
     div_range = [1,3,6,12]#[1,3,6,12,24,36]
     div_spc_range = [1,12]
     chcsho_lags = [1,3,6,12]
     eqnpo_lags = [1,3,6,12]
     mom_rev_lags = [[0, 1],[0, 2],[0, 3],[1, 3],[0, 6],[1, 6],[0, 9],[1, 9],[0, 12],[1, 12],[7, 12],[1, 18],[1, 24],[12, 24],[1, 36],[12, 36],[12, 48],[1, 48],[1, 60],[12, 60],[36, 60]]
-    ret_var = 'ret_local' if (local_currency == 1) else 'ret'
+    ret_var = 'ret_local' if local_currency else 'ret'
     market_ret = pl.scan_parquet(market_ret_path)
     data = (pl.scan_parquet(data_path)
               .join(market_ret, how = 'left', on = ['excntry', 'eom'])
@@ -2038,9 +2046,11 @@ def market_chars_monthly(data_path, market_ret_path, local_currency):
                                       [div_cols(i, spc = True) for i in div_spc_range] +\
                                       [eqnpo_cols(i) for i in eqnpo_lags] +\
                                       [chcsho_cols(i) for i in chcsho_lags] +\
-                                      [mom_rev_cols(i,j) for i,j in mom_rev_lags]))
+                                      [mom_rev_cols(i,j) for i,j in mom_rev_lags])
+           )
     for i in [[1,1], [2,5], [6, 10], [11, 15], [16, 20]]: data = seasonality(data, 'ret_x', i[0], i[1])
-    data = (data.drop(['me','shares','adjfct', 'adjfct', 'prc', 'ret','ret_local','ret_x', 'div_tot', 'div_cash', 'div_spc', 'dolvol', 'ret_exc', 'mkt_vw_exc','ret_miss', 'ri_x', 'ri', 'count', 'aux'])
+    data = (data.with_columns([pl.when(pl.col(col) < 0.000009).then(0.).otherwise(pl.col(col)).alias(col)for col in data.collect_schema().names() if col.startswith("div") and col.endswith("me")])
+                .drop(['me','shares','adjfct', 'adjfct', 'prc', 'ret','ret_local','ret_x', 'div_tot', 'div_cash', 'div_spc', 'dolvol', 'ret_exc', 'mkt_vw_exc','ret_miss', 'ri_x', 'ri', 'count', 'aux'])
                 .sort(['id','eom']))
     #DO NOT USE STREAMING HERE
     data.collect().write_parquet('market_chars_m.parquet')
