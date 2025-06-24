@@ -765,7 +765,7 @@ def gen_temp_sf(freq, crsp_df, comp_df):
 def add_obs_main_to_sf_and_write_file(freq, sf_df, obs_main):
     file_path = '__msf_world.parquet' if freq == 'm' else 'world_dsf.parquet'
     sort_vars = ['id','eom'] if freq == 'm' else ['id','date']
-    (sf_df.filter(col('eom')  >= pl.datetime(1999, 12, 31))
+    (sf_df#.filter(col('eom')  >= pl.datetime(1999, 12, 31))
           .join(obs_main, on = ['id','eom'], how = 'left')
           .unique(sort_vars)
           #.sort(sort_vars)
@@ -1011,8 +1011,8 @@ def return_cutoffs(freq, crsp_only):
                      ret_exc_99_9   = perc_exp('ret_exc'  , lambda x: perc_method(x, 0.999))))
     data.sort(group_vars).collect().write_parquet(res_path)
 def winsorize_mkt_ret(var, cutoff, comparison):
-    if comparison == '>': c1 = (col(var) > col(cutoff)) & (col('source_crsp') == 0) & (col(var).is_not_null())
-    else: c1 = ((col(var) < col(cutoff)).fill_null(bo_false())) & (col('source_crsp') == 0) & (col(var).is_not_null())
+    if comparison == '>': c1 = (col(var) > col(cutoff)).fill_null(pl.lit(True)) & (col('source_crsp') == 0) & (col(var).is_not_null())
+    else: c1 = (col(var) < col(cutoff)).fill_null(pl.lit(True)) & (col('source_crsp') == 0) & (col(var).is_not_null())
     return (pl.when(c1).then(col(cutoff)).otherwise(col(var))).alias(var)
 def load_mkt_returns_params(freq):
     dt_col           = 'date' if freq == 'd' else 'eom'
@@ -1030,6 +1030,7 @@ def add_cutoffs_and_winsorize(df, wins_data_path, group_vars, dt_col):
             .with_columns([winsorize_mkt_ret(i, f'{i}_99_9', '>') for i in ['ret', 'ret_local', 'ret_exc']])
             .with_columns([winsorize_mkt_ret(i, f'{i}_0_1' , '<') for i in ['ret', 'ret_local', 'ret_exc']]))
     return df
+def sas_sum_agg(name): return pl.when(pl.col(name).count()>0).then(pl.sum(name)).otherwise(None)
 def apply_stock_filter_and_compute_indexes(df, dt_col, max_date_lag):
     c1 = (col('obs_main') == 1) & (col('exch_main') == 1) & (col('primary_sec') == 1) & (col('common') == 1) & (col('ret_lag_dif') <= max_date_lag) & (col('me_lag1').is_not_null()) & (col('ret_local').is_not_null())
     df = (df.filter(c1)
@@ -1038,13 +1039,13 @@ def apply_stock_filter_and_compute_indexes(df, dt_col, max_date_lag):
                           aux3 = col('ret_exc')   * col('me_lag1'))
             .group_by(['excntry', dt_col])
             .agg(stocks        = pl.len(),
-                 me_lag1       = pl.sum('me_lag1'),
-                 dolvol_lag1   = pl.sum('dolvol_lag1'),
-                 mkt_vw_lcl    = pl.sum('aux1')/pl.sum('me_lag1'),
+                 me_lag1       = sas_sum_agg('me_lag1'),
+                 dolvol_lag1   = sas_sum_agg('dolvol_lag1'),
+                 mkt_vw_lcl    = sas_sum_agg('aux1')/sas_sum_agg('me_lag1'),
                  mkt_ew_lcl    = pl.mean('ret_local'),
-                 mkt_vw        = pl.sum('aux2')/pl.sum('me_lag1'),
+                 mkt_vw        = sas_sum_agg('aux2')/sas_sum_agg('me_lag1'),
                  mkt_ew        = pl.mean('ret'),
-                 mkt_vw_exc    = pl.sum('aux3')/pl.sum('me_lag1'),
+                 mkt_vw_exc    = sas_sum_agg('aux3')/sas_sum_agg('me_lag1'),
                  mkt_ew_exc    = pl.mean('ret_exc')))
     return df
 def drop_non_trading_days(df, n_col, dt_col, over_vars, thresh_fraction):
