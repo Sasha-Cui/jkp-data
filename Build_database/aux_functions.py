@@ -1361,7 +1361,8 @@ def chg_to_assets(var_gr, horizon):
     # Removing '_x' from the column name
     name_gr = var_gr.replace('_x', '')
     name_gr = f"{name_gr}_gr{int(horizon/12)}a"
-    name_gr_exp = ((col(var_gr) - col(var_gr).shift(horizon))/col('at_x'))
+    #name_gr_exp = ((col(var_gr) - col(var_gr).shift(horizon))/col('at_x'))
+    name_gr_exp = col(var_gr).diff(horizon)/col('at_x')
     c1 = (col('at_x') > 0) & (col("count") > horizon)
     name_gr_col = pl.when(c1).then(name_gr_exp).otherwise(fl_none()).alias(name_gr)
     return name_gr_col
@@ -1574,21 +1575,18 @@ def earnings_persistence(data, __n, __min):
     x, y = '__ni_at_l1', '__ni_at'
     months = 12 * __n
     beta = pl.rolling_cov(x, y, window_size = months, min_periods = __min)/col(x).rolling_var(window_size = months, min_periods = __min)
-    alpha_exp = col(y).rolling_mean(window_size = months, min_periods = __min) - beta * col(x).rolling_mean(window_size = months, min_periods = __min)
     exp1 = col(y).rolling_var(window_size = months, min_periods = __min)
     exp2 = col(x).rolling_var(window_size = months, min_periods = __min)
-    df = (data.select(['gvkey', 'curcd', 'datadate', 'ni_x', 'at_x'])
-              .sort(['gvkey', 'curcd', 'datadate'])
-              .with_columns(__ni_at    = safe_div('ni_x', 'at_x', '__ni_at', 3),
-                            __ni_at_l1 = safe_div('ni_x', 'at_x', '__ni_at_l1', 7))
+    df = (data.sort(['gvkey', 'curcd', 'datadate'])
+              .select(['gvkey', 'curcd', 'datadate', safe_div('ni_x', 'at_x', '__ni_at', 3).alias('__ni_at'), safe_div('ni_x', 'at_x', '__ni_at_l1', 7).alias('__ni_at_l1')])
               .sort(['gvkey','curcd','datadate'])
-              .with_columns(ni_ar1     = beta.over(['gvkey','curcd']),
-                            alpha      = alpha_exp.over(['gvkey','curcd']))
+              .with_columns(ni_ar1     = beta.over(['gvkey','curcd']).fill_nan(None))
               .sort(['gvkey','curcd','datadate'])
-              .with_columns(ni_ivol    = ((exp1 - (col('ni_ar1')**2) * exp2) ** (1/2)).over(['gvkey','curcd']))
-              .filter(col('ni_ar1').is_not_null())
+              .with_columns(ni_ivol    = ((exp1 - (col('ni_ar1')**2) * exp2) ** (1/2)).over(['gvkey','curcd']).fill_nan(None))
+              #.filter(col('ni_ar1').is_not_null())
               .select(['gvkey','curcd','datadate','ni_ar1','ni_ivol'])
-              .sort(['gvkey','datadate','curcd']))
+              #.sort(['gvkey','datadate','curcd'])
+              )
     return df
 def scale_me(var):
     # Removing '_x' from the column name
@@ -1609,7 +1607,6 @@ def mean_year(var):
             .when(col(var).is_not_null()).then(col(var))
             .when((col(var).shift(12).over(['gvkey','curcd'])).is_not_null()).then(col(var).shift(12).over(['gvkey','curcd']))
             .otherwise(fl_none()))
-
 
 def temp_liq_rat(col_avg, den, alias):
     col1 = (365 * mean_year(col_avg)/col(den))
@@ -1799,29 +1796,32 @@ def add_liq_and_efficiency_ratios(df):
             .sort(['gvkey','curcd','datadate'])
             #Activity/Efficiency Ratios:
             .with_columns([temp_rat_other('cogs', 'invt', 'inv_turnover'),
-                            temp_rat_other('sale_x', 'at_x', 'at_turnover'),
-                            temp_rat_other('sale_x', 'rect', 'rec_turnover'),
-                            temp_rat_other_spc()]))
+                           temp_rat_other('sale_x', 'at_x', 'at_turnover'),
+                           temp_rat_other('sale_x', 'rect', 'rec_turnover'),
+                           temp_rat_other_spc()]))
     return df
 def add_profit_scaled_by_lagged_vars(df):
     df = (df.sort(['gvkey', 'curcd', 'datadate'])
             .with_columns([safe_div('op_x', 'at_x', 'op_atl1', 4),
-                            safe_div('gp_x', 'at_x', 'gp_atl1', 4),
-                            safe_div('ope_x', 'be_x', 'ope_bel1', 4),
-                            safe_div('cop_x', 'at_x', 'cop_atl1', 4)]))
+                           safe_div('gp_x', 'at_x', 'gp_atl1', 4),
+                           safe_div('ope_x', 'be_x', 'ope_bel1', 4),
+                           safe_div('cop_x', 'at_x', 'cop_atl1', 4)]))
     return df
 def add_earnings_persistence_and_expand(df, lag_to_pub, max_lag):
     earnings_pers = earnings_persistence(df, 5, 5)
     df = (df.join(earnings_pers, on = ['gvkey', 'curcd', 'datadate'], how = 'left')
             .filter(col('data_available')==1)
-            .sort(['gvkey','curcd', 'datadate'])
-            .unique(['gvkey','curcd','datadate'], keep = 'first')
-            .sort(['gvkey','curcd', 'datadate'])
+            # .sort(['gvkey','curcd', 'datadate'])
+            # .unique(['gvkey','curcd','datadate'], keep = 'first')
+            #.sort(['gvkey','curcd', 'datadate'])
+            .sort(['gvkey', 'datadate'])
             .with_columns(start_date = col('datadate').dt.offset_by(f'{lag_to_pub}mo').dt.month_end())
             .sort(['gvkey', 'datadate'])
             .with_columns(next_start_date = col('start_date').shift(-1).over(['gvkey']))
             .with_columns(end_date = pl.min_horizontal((col('next_start_date').dt.offset_by('-1mo').dt.month_end()),(col('datadate').dt.offset_by(f'{max_lag}mo').dt.month_end())))
             .drop('next_start_date'))
+    print('Executing new version of expand')
+    df.collect().write_parquet('expand_input.parquet')
     return expand(data=df, id_vars=['gvkey'], start_date='start_date', end_date='end_date', freq='month', new_date_name='public_date')
 def add_me_data_and_compute_me_mev_mat_eqdur_vars(df, me_df):
     #Characteristics Scaled by Market Equity
@@ -1880,6 +1880,7 @@ def financial_soundness_and_misc_ratios_exps():
 
 @measure_time
 def create_acc_chars(data_path, output_path, lag_to_public, max_data_lag, __keep_vars, me_data_path, suffix):
+    print('Creating accounting characteristics. New version.')
     #adding and filtering market return data
     me_data = load_mkt_equity_data(me_data_path, False)
 
@@ -2198,7 +2199,7 @@ def ap_factors(output_path, freq, sf_path, mchars_path, mkt_path, min_stocks_bp,
                 .join(hxz, how = 'left', on = ['excntry', date_col]))
     output.write_parquet(output_path)
 def get_beta_and_ivol_exp(x, y, __n, __min, beta_var):
-    beta_exp  = pl.rolling_cov(x,y,window_size=__n, min_periods = __min)/col(x).rolling_var(window_size=__n, min_periods = __min)
+    beta_exp  = (pl.rolling_cov(x,y,window_size=__n, min_periods = __min)/col(x).rolling_var(window_size=__n, min_periods = __min)).fill_nan(None)
     ivol_exp  = ((col(y).rolling_var(window_size=__n, min_periods = __min) - (col(beta_var) ** 2) * col(x).rolling_var(window_size=__n, min_periods = __min)) ** (1/2)).fill_nan(None)
     return beta_exp, ivol_exp
 def merge_sf_and_fcts(data_path, fcts_path):
@@ -2227,21 +2228,94 @@ def gen_sf_for_regression(data_path, fcts_path, id_vars, time_var, freq, wins_va
     __msf = __msf2.join(__msf, on = [*id_vars, time_var], how = 'left')
     return __msf
 
+def winsorize_by_group(
+    con,
+    table: str,
+    group_cols: list[str],
+    win_var: str,
+    lower: float = 0.001,
+    upper: float = 0.999,
+    out_winsor: str = "winsorized_rets",
+):
+    # 1) Build the GROUP BY list and join condition
+    grp_list = ", ".join(group_cols)
+    join_cond = " AND ".join(f"d.{c}=p.{c}" for c in group_cols)
+
+    # 2) Compute per‐group percentiles
+    con.raw_sql(f"""
+    DROP TABLE IF EXISTS percs;
+    CREATE TABLE percs AS
+    SELECT
+      {grp_list},
+      quantile_disc({win_var}, {lower}) AS low,
+      quantile_disc({win_var}, {upper}) AS high
+    FROM {table}
+    GROUP BY {grp_list};
+    """)
+
+    # 3) Apply winsorization
+    con.raw_sql(f"""
+    DROP TABLE IF EXISTS {out_winsor};
+    CREATE TABLE {out_winsor} AS
+    SELECT
+       d.* EXCLUDE ({win_var}),
+      CASE
+        WHEN d.{win_var} < p.low  THEN p.low
+        WHEN d.{win_var} > p.high THEN p.high
+        ELSE d.{win_var}
+      END AS {win_var}
+    FROM {table} AS d
+    LEFT JOIN percs AS p
+      ON {join_cond};
+    """)
+
 @measure_time
 def market_beta(output_path, data_path, fcts_path, __n , __min):
-    beta_var, ivol_var = f'beta_{__n}m', f'ivol_capm_{__n}m'
-    beta_exp, ivol_exp = get_beta_and_ivol_exp('mktrf', 'ret_exc', __n, __min, beta_var)
-    __msf = gen_sf_for_regression(data_path, fcts_path, ['id'], 'eom', '1mo', 'ret_exc', 0.1/100, 99.9/100)
-    __msf = (__msf.sort(['id','eom'])
-                  .with_columns(beta_exp.over('id').alias(beta_var))
-                  .sort(['id','eom'])
-                  .with_columns(ivol_exp.over('id').alias(ivol_var))
-                  .unique(['id', 'eom'])
-                  .select(['id','eom', beta_var, ivol_var])
-                  .sort(['id','eom'])
-                  .with_columns([col(beta_var).fill_null(strategy = 'forward').over('id').alias(beta_var),
-                                 col(ivol_var).fill_null(strategy = 'forward').over('id').alias(ivol_var)]))
-    __msf.sort(['id','eom']).collect().write_parquet(output_path)
+    os.system('rm -f aux_beta.ddb')
+    con = ibis.duckdb.connect('aux_beta.ddb', threads = os.cpu_count())
+    con.create_table('data_msf', con.read_parquet(data_path), overwrite = True)
+    con.create_table('fcts'    , con.read_parquet(fcts_path), overwrite = True)
+    con.raw_sql("""
+    DROP TABLE IF EXISTS __msf1;
+    
+    CREATE TABLE __msf1 AS
+    SELECT
+        a.id,
+        CAST(a.id AS INTEGER) AS id_int,
+        a.eom,
+        a.ret_exc,
+        a.ret_lag_dif,
+        b.mktrf,
+        CAST(
+            (EXTRACT(year FROM a.eom) * 12
+             + EXTRACT(month FROM a.eom)
+            ) 
+          AS INTEGER) AS aux_date
+          
+    FROM data_msf AS a
+    LEFT JOIN fcts AS b
+      ON a.excntry = b.excntry
+     AND a.eom     = b.eom
+    WHERE
+        a.ret_local <> 0
+        AND a.ret_exc   IS NOT NULL
+        AND a.ret_lag_dif = 1
+        AND b.mktrf    IS NOT NULL;
+    """)
+    winsorize_by_group(con, '__msf1', ['eom'], 'ret_exc', 0.1/100, 99.9/100, '__msf2')
+    base_data = con.table('__msf2').to_polars().lazy()
+    aux_maps = gen_aux_maps(__n)
+    df = pl.concat([process_map_chunks(base_data, mapping, 'capm', 60, 36) for mapping in aux_maps]).collect()
+    ids = con.table('__msf2').select(['id', 'id_int']).distinct().to_polars()
+    dates = con.table('__msf2').select(['aux_date', 'eom']).distinct().to_polars().with_columns(col('aux_date').cast(pl.Int32))
+    res = (df.with_columns(col('aux_date').cast(pl.Int32))
+             .join(ids, how = 'inner', on = 'id_int')
+             .join(dates, how = 'inner', on = 'aux_date')
+             .select(['id', 'eom', col("^beta.*$").alias(f'beta_{__n}m'), col("^ivol.*$").alias(f'ivol_capm_{__n}m')])
+             .sort(['id', 'eom'])
+        )
+    res.write_parquet(output_path)
+    con.disconnect()
     
 @measure_time
 def prepare_daily(data_path, fcts_path):
@@ -2752,7 +2826,7 @@ def apply_group_filter(df, stat, min_obs):
         pass
     elif stat == 'dimsonbeta':
         df = (df.with_columns(n1 = pl.len().over(['id_int','eom']),
-                            n2 = pl.count('ret_exc').over(['id_int', 'group_number']))
+                              n2 = pl.count('ret_exc').over(['id_int', 'group_number']))
                 .filter((col('n1') >= min_obs - 1) & (col('n2') >= min_obs) & (col('mktrf_lg1').is_not_null()) & (col('mktrf_ld1').is_not_null())))
     else:
         if stat == 'zero_trades': filter_var = 'tvol' 
@@ -2793,8 +2867,12 @@ def process_map_chunks(base_data, mapping, stats, sfx, __min):
 def gen_aux_maps(sfx):
     parameter_mapping = {"_21d": 1,"_126d": 6,"_252d": 12,"_1260d": 60}
     date_aux = datetime.datetime.today().month + datetime.datetime.today().year * 12
-    date_idx = [i for i in range(23113 - parameter_mapping[sfx], date_aux+1)]
-    aux_maps = group_mapping_dfs(date_idx, parameter_mapping[sfx])
+    if sfx in parameter_mapping.keys():
+        date_idx = [i for i in range(23113 - parameter_mapping[sfx], date_aux+1)]
+        aux_maps = group_mapping_dfs(date_idx, parameter_mapping[sfx])
+    else:
+        date_idx = [i for i in range(23113 - int(sfx), date_aux+1)]
+        aux_maps = group_mapping_dfs(date_idx, int(sfx))
     return aux_maps
 
 def rvol(df, sfx, __min):
