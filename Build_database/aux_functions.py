@@ -2136,21 +2136,23 @@ def sort_ff_style(char, min_stocks_bp, min_stocks_pf, date_col, data, sf):
     char_pf_exp = (pl.when(col(f'{char}_l') >= col('bp_p70')).then(pl.lit('high'))\
                      .when(col(f'{char}_l') >= col('bp_p30')).then(pl.lit('mid'))\
                      .otherwise(pl.lit('low'))).alias('char_pf')
-    over_vars = ['excntry_l','size_pf', 'char_pf', 'eom']
     bp_stocks = (data.filter(c1)
                      .group_by(['eom', 'excntry_l'])
                      .agg(n   = pl.len().alias('n'),
-                          aux = col(f'{char}_l'))
-                     .with_columns(bp_p30 = perc_exp('aux', lambda x: perc_method(x, 0.3), True),
-                                   bp_p70 = perc_exp('aux', lambda x: perc_method(x, 0.7), True))
-                     .drop('aux'))
+                          bp_p30  = perc_exp(f'{char}_l', lambda x: perc_method(x, 0.3)),
+                          bp_p70  = perc_exp(f'{char}_l', lambda x: perc_method(x, 0.7)),
+                          )
+                )
     data = (data.join(bp_stocks, how = 'left', on = ['excntry_l', 'eom'])
                 .filter((col('n') >= min_stocks_bp) & (col(f'{char}_l').is_not_null()) & (col('size_pf') != ''))
-                .select(['excntry_l','id','eom','size_pf', 'me_l', char_pf_exp])
-                .with_columns(w = pl.when((pl.sum('me_l') != 0).over(over_vars)).then((col('me_l')/pl.sum('me_l')).over(over_vars)).otherwise(fl_none()),
-                              n = pl.count('me_l').over(over_vars))
+                .select(['excntry_l','id','eom','size_pf', 'me_l', 'be_me_l', char_pf_exp])#This select doesn't impact performance but it helps in debugging
+                .group_by(['excntry_l', 'size_pf', 'char_pf', 'eom'])
+                .agg(id = col('id'),
+                     w  = col('me_l')/pl.sum('me_l'),
+                     n  = pl.len())
                 .filter(col('n') >= min_stocks_pf)
-                .drop('n'))
+                .drop('n')
+                .explode(['id', 'w']))
     returns = sf.join(data, how = 'inner', left_on = ['id','eom','excntry'], right_on = ['id','eom','excntry_l'])
     returns = (returns.with_columns(ret_exc = col('ret_exc') * col('w'))
                       .group_by(['excntry', 'size_pf', 'char_pf', date_col])
@@ -2158,8 +2160,9 @@ def sort_ff_style(char, min_stocks_bp, min_stocks_pf, date_col, data, sf):
                       .with_columns(characteristic = pl.lit(char),
                                     combined_pf = (col('size_pf') + '_' + col('char_pf')))
                       .collect()
-                      .pivot(values='ret_exc',index=['excntry', date_col],columns='combined_pf')
-                      .select(['excntry', date_col, *char_pf_rets()]).sort(['excntry', date_col]))
+                      .pivot(values='ret_exc', index=['excntry', date_col], on='combined_pf')
+                      .select(['excntry', date_col, *char_pf_rets()])
+                      .sort(['excntry', date_col]))
     return returns
 
 def winsorize_var(df, sort_vars, wins_var, perc_low, perc_high):
@@ -2182,25 +2185,9 @@ def ap_factors(output_path, freq, sf_path, mchars_path, mkt_path, min_stocks_bp,
 
     print(f'Executing AP factors with frequency {freq}', flush=True)
 
-    #sf_cond  = "a.ret_lag_dif = 1" if freq == 'm' else "a.ret_lag_dif <= 5"
-    # os.system('rm -f aux_ap_factors.ddb')
-    # con = ibis.duckdb.connect('aux_ap_factors.ddb', threads = os.cpu_count())
-    # con.create_table('data_msf', con.read_parquet(sf_path), overwrite = True)
-    # con.raw_sql(f"""
-    #     DROP TABLE IF EXISTS filtered_rets;
-        
-    #     CREATE TABLE filtered_rets AS
-    #     SELECT excntry, id, eom, ret_exc
-    #     FROM data_msf AS a
-    #     WHERE {sf_cond} 
-    #           AND a.ret_exc IS NOT NULL
-    #         ;
-    #     """)
-    # winsorize_by_group(con, 'filtered_rets', ['eom'], 'ret_exc', 0.1/100, 99.9/100, 'wins_rets')
-    # world_sf2 = con.table('wins_rets').to_polars().lazy()
     world_sf1 = (pl.scan_parquet(sf_path)
                 .filter(sf_cond & col('ret_exc').is_not_null())
-                .select(['excntry', 'id', 'eom', 'ret_exc']))
+                .select(['excntry', 'id', 'eom', 'date', 'ret_exc']))
     world_sf2 =  winsorize_var(world_sf1, ['eom'], 'ret_exc', 0.1/100, 99.9/100)
     
     base = (pl.scan_parquet(mchars_path)
@@ -2219,13 +2206,12 @@ def ap_factors(output_path, freq, sf_path, mchars_path, mkt_path, min_stocks_bp,
               .with_columns(size_pf = (pl.when(col('size_grp_l').is_null()).then(pl.lit(''))\
                                          .when(col('size_grp_l').is_in(['large', 'mega'])).then(pl.lit('big'))\
                                          .otherwise(pl.lit('small'))))
-              .sort(['excntry_l', 'size_grp_l', 'eom'])#Remove this sort
               )
-
+    
     ff           = sort_ff_style('be_me' , min_stocks_bp, min_stocks_pf, date_col, base, world_sf2).rename({'lms': 'hml'       , 'smb': 'smb_ff'})
     asset_growth = sort_ff_style('at_gr1', min_stocks_bp, min_stocks_pf, date_col, base, world_sf2).rename({'lms': 'at_gr1_lms', 'smb': 'at_gr1_smb'})
     roeq         = sort_ff_style('niq_be', min_stocks_bp, min_stocks_pf, date_col, base, world_sf2).rename({'lms': 'niq_be_lms', 'smb': 'niq_be_smb'})
-    hxz          = (asset_growth.join(roeq, how = 'left', on = ['excntry',date_col])
+    hxz          = (asset_growth.join(roeq, how = 'left', on = ['excntry', date_col])
                                 .select(['excntry', date_col, (-1*col('at_gr1_lms')).alias('inv'),\
                                          col('niq_be_lms').alias('roe'), ((col('at_gr1_smb') + col('niq_be_smb'))/2).alias('smb_hxz')]))
 
