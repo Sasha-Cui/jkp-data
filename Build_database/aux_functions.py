@@ -135,12 +135,6 @@ def gen_raw_data_dfs():
     collect_and_write(__prihistusa, 'Raw_data_dfs/__prihistusa.parquet')
     __prihistrow = prihist_aux('Raw_tables/comp_g_sec_history.parquet', 'prihistrow')
     collect_and_write(__prihistrow, 'Raw_data_dfs/__prihistrow.parquet')
-    __comp_secm1 = (pl.scan_parquet('Raw_tables/comp_secm.parquet')
-                    .select(['gvkey', 'iid', 'datadate', 'tpci', 'exchg', col('curcdm').alias('curcdd'),
-                            col('prccm').alias('prc_local'), col('prchm').alias('prc_high'), col('prclm').alias('prc_low'),
-                            col('ajexm').alias('ajexdi'), 'cshom', 'csfsm', 'cshoq', 'ajexm', 'dvpsxm', 'cshtrm', 'curcddvm',
-                            pl.when(col('trfm') != 0).then(col('prccm') / col('ajexm') * col('trfm')).otherwise(fl_none()).alias('ri_local')]))
-    collect_and_write(__comp_secm1, 'Raw_data_dfs/__comp_secm1.parquet')
     a = pl.scan_parquet('Raw_tables/comp_exrt_dly.parquet').filter(col('fromcurd') == 'GBP')
     b = pl.scan_parquet('Raw_tables/comp_exrt_dly.parquet').filter(col('tocurd') == 'USD')
     __fx1 = (a.join(b, how = 'inner', on = ['fromcurd', 'datadate'], suffix = '_b')
@@ -317,6 +311,7 @@ def gen_comp_dsf():
     con.create_table('__firm_shares2', con.read_parquet('__firm_shares2.parquet')        )
     con.create_table('comp_secd'     , con.read_parquet('Raw_tables/comp_secd.parquet')  )
     con.create_table('fx'            , con.read_parquet('fx_data.parquet')               )
+
     con.raw_sql("""
     CREATE TABLE __comp_dsf_global AS
     SELECT 
@@ -390,8 +385,7 @@ def gen_comp_dsf():
                 
     FROM __comp_dsf2;
     
-    """)
-    
+    """)    
     t = con.table('__comp_dsf3').drop(['div', 'divd', 'divsp', 'fx_div', 'curcddv', 'prc_high_lcl', 'prc_low_lcl'])
     t.to_parquet('__comp_dsf.parquet')
     con.disconnect()
@@ -400,7 +394,7 @@ def gen_secd_data():
     os.system('rm -f aux_msf.ddb')
     con = ibis.duckdb.connect('aux_msf.ddb', threads = os.cpu_count())
     table = con.read_parquet('__comp_dsf.parquet')
-    window = ibis.window(group_by=['gvkey', 'iid', 'eom'], order_by='datadate')
+    window = ibis.window(group_by=['gvkey', 'iid', 'eom'])
     new_table = (table.mutate(
                               prc_highm = ibis.greatest((_.prc/_.ajexdi).max().over(window),(_.prc_high/_.ajexdi).max().over(window)) * _.ajexdi,
                               prc_lowm  = ibis.least(   (_.prc/_.ajexdi).min().over(window),(_.prc_low /_.ajexdi).min().over(window)) * _.ajexdi,
@@ -412,40 +406,70 @@ def gen_secd_data():
                               source    = 1
                              )
                       .filter((_.prc_local.notnull()) & (_.curcdd.notnull()) & (_.prcstd.isin([3, 4, 10])))
-                      .drop(['cshtrd', 'div_tot', 'div_cash', 'div_spc', 'dolvol', 'prc_high', 'prc_low'])
+                      .mutate(max_date = _.datadate.max().over(window))
+                      .filter(_.max_date == _.datadate)
+                      .drop(['cshtrd', 'div_tot', 'div_cash', 'div_spc', 'dolvol', 'prc_high', 'prc_low', 'max_date'])
                       .rename({'div_tot': 'div_totm', 'div_cash': 'div_cashm', 'div_spc': 'div_spcm', 'dolvol': 'dolvolm', 'prc_high': 'prc_highm', 'prc_low': 'prc_lowm'})
-                      .order_by(['gvkey', 'iid', 'eom', 'datadate'])
-                      .distinct(on = ['gvkey', 'iid', 'eom'], keep = 'last')
+                      .order_by(['gvkey', 'iid', 'eom'])
                 )
     new_table.to_parquet('secd_data.parquet')
     con.disconnect()
 def gen_secm_data():
-    fx = compustat_fx().lazy()
-    fx_div = fx.clone().with_columns(col('fx').alias('fx_div')).drop('fx')
-    __comp_secm = pl.scan_parquet('Raw_data_dfs/__comp_secm1.parquet').with_columns([col(var).cast(pl.Float64) for var in ['prc_local', 'prc_high', 'prc_low', 'ajexdi', 'cshom', 'csfsm', 'cshoq', 'ajexm', 'dvpsxm', 'cshtrm']])
-    aux = pl.scan_parquet('__firm_shares2.parquet').with_columns([col(var).cast(pl.Float64) for var in ['csho_fund', 'ajex_fund']])
-    aux_ajexm_exp = pl.when(col('ajexm') != 0).then(col('csho_fund') * col('ajex_fund') / col('ajexm')).otherwise(fl_none())
-    __comp_secm = (__comp_secm.join(aux, how = 'left', left_on = ['gvkey', 'datadate'], right_on = ['gvkey', 'ddate'])
-                              .join(fx, how = 'left', on = ['datadate', 'curcdd']) #fx datadate in our terminology is the same as date in Theis' code
-                              .join(fx_div, how = 'left', left_on = ['datadate', 'curcddvm'], right_on = ['datadate', 'curcdd'])
-                              .with_columns(eom      = col('datadate').dt.month_end(),
-                                            cshoc    = pl.coalesce(col('cshom') / 1e6, col('csfsm') / 1e3, col('cshoq'), aux_ajexm_exp),
-                                            chstrm   = adj_trd_vol_NASDAQ('datadate', 'cshtrm', 'exchg', 14),
-                                            fx       = pl.when(col('curcdd') == 'USD').then(pl.lit(1)).otherwise(col('fx')),
-                                            fx_div   = pl.when(col('curcddvm') == 'USD').then(pl.lit(1)).otherwise(col('fx_div')))
-                              .with_columns(prc      = col('prc_local') * col('fx'),
-                                            prc_high = col('prc_high')  * col('fx'),
-                                            prc_low  = col('prc_low')   * col('fx'),
-                                            ri       = col('ri_local')  * col('fx'),
-                                            div_tot  = col('dvpsxm')    * col('fx_div'))
-                              .with_columns(me       = col('prc')       * col('cshoc'),
-                                            dolvol   = col('prc')       * col('cshtrm'),
-                                            div_cash = fl_none(),
-                                            div_spc  = fl_none(),
-                                            prcstd   = pl.lit(10).cast(pl.Int32),
-                                            source   = pl.lit(2).cast(pl.Int32),
-                                            exchg    = col('exchg').cast(pl.Int32)))
-    __comp_secm.collect().write_parquet('secm_data.parquet')
+    os.system('rm -f aux_comp_secm.ddb')
+    con = ibis.duckdb.connect('aux_comp_secm.ddb', threads = os.cpu_count())    
+
+    compustat_fx().rename({'datadate': 'date'}).write_parquet('fx_data.parquet')
+    con.create_table('comp_secm'     , con.read_parquet('Raw_tables/comp_secm.parquet'), overwrite = True)
+    con.create_table('__firm_shares2', con.read_parquet('__firm_shares2.parquet')      , overwrite = True)
+    con.create_table('fx'            , con.read_parquet('fx_data.parquet')             , overwrite = True)
+
+    con.raw_sql("""
+        DROP TABLE IF EXISTS __comp_secm2;
+        
+        CREATE TABLE __comp_secm2 AS
+        WITH base AS (
+        SELECT
+            a.gvkey, a.iid, a.datadate, last_day(a.datadate) AS eom, a.tpci, a.exchg, a.dvpsxm,
+            a.curcdm       AS curcdd,
+            a.prccm        AS prc_local,
+            a.prchm        AS prc_high_local,
+            a.prclm        AS prc_low_local,
+            a.ajexm        AS ajexdi,
+            coalesce(a.cshom/1e6, a.csfsm/1e3, a.cshoq, b.csho_fund * b.ajex_fund / a.ajexm) AS cshoc,
+            CASE
+            WHEN a.exchg = 14 AND a.datadate <  DATE '2001-02-01' THEN a.cshtrm/2
+            WHEN a.exchg = 14 AND a.datadate <= DATE '2001-12-31' THEN a.cshtrm/1.8
+            WHEN a.exchg = 14 AND a.datadate <  DATE '2003-12-31' THEN a.cshtrm/1.6
+            ELSE a.cshtrm
+            END AS cshtrm,
+            CASE WHEN a.curcdm    = 'USD' THEN 1 ELSE c.fx END AS fx,
+            CASE WHEN a.curcddvm  = 'USD' THEN 1 ELSE d.fx END AS fx_div,
+            a.prccm / a.ajexm * a.trfm AS ri_local
+        FROM comp_secm AS a
+        LEFT JOIN __firm_shares2 AS b
+            ON a.gvkey    = b.gvkey  AND a.datadate = b.ddate
+        LEFT JOIN fx AS c
+            ON a.curcdm   = c.curcdd AND a.datadate = c.date
+        LEFT JOIN fx AS d
+            ON a.curcddvm = d.curcdd AND a.datadate = d.date
+        )
+        SELECT
+        gvkey    , iid   , datadate, eom   , tpci    , exchg, curcdd,
+        prc_local, ajexdi, cshoc   , cshtrm, ri_local, fx,
+        0 AS source,
+        10 as prcstd,
+        prc_high_local * fx AS prc_high,
+        prc_low_local  * fx AS prc_low,
+        prc_local      * fx                AS prc,
+        prc_local      * fx * cshoc        AS me,
+        cshtrm         * fx * prc_local    AS dolvol,
+        ri_local       * fx                AS ri,
+        dvpsxm         * fx_div            AS div_tot,
+        NULL::DOUBLE                       AS div_cash,
+        NULL::DOUBLE                       AS div_spc
+        FROM base;
+    """)
+    con.table('__comp_secm2').to_parquet('secm_data.parquet')
 @measure_time
 def gen_comp_msf():
     gen_secd_data()
@@ -453,8 +477,8 @@ def gen_comp_msf():
     common_vars = ['gvkey', 'iid', 'datadate', 'eom', 'tpci', 'exchg', 'curcdd', 'prc_local', 'prc_high', 'prc_low', 'ajexdi', 'cshoc', 'ri_local', 'fx', 'prc', 'me', 'cshtrm', 'dolvol', 'ri', 'div_tot', 'div_cash', 'div_spc', 'prcstd', 'source'] 
     os.system('rm -f aux_msf.ddb')
     con = ibis.duckdb.connect('aux_msf.ddb', threads = os.cpu_count())
-    secd = con.read_parquet('secd_data.parquet').select(common_vars).cast({'ajexdi': 'float'})
-    secm = con.read_parquet('secm_data.parquet').select(common_vars)
+    secd = con.read_parquet('secd_data.parquet').select(common_vars).cast({'ajexdi': 'float', 'prc_local': 'float'})
+    secm = con.read_parquet('secm_data.parquet').select(common_vars).cast({'ajexdi': 'float', 'prc_local': 'float'})
     window = ibis.window(group_by=['gvkey', 'iid', 'eom'], order_by='datadate')
     __comp_msf = (secd.union(secm)
                       .mutate(n = _.gvkey.count().over(window))
@@ -541,7 +565,12 @@ def add_primary_sec(data_path, datevar, file_name):
                  .mutate(
                          primary_sec = (~(_.iid.isnull()) & ((_.iid == _.prihistrow) | (_.iid == _.prihistusa) | (_.iid == _.prihistcan)))
                          )
+                 .drop(['exchgdesc', 'prihistrow',	'prihistusa', 'prihistcan', 'prirow', 'priusa', 'prican'])
                  .cast({'primary_sec': 'int'})
+                 .fill_null({'primary_sec': 0})
+                 .distinct(on = ['gvkey', 'iid', 'datadate'])
+                 .order_by(['gvkey', 'iid', 'datadate'])
+                 
     )
     data.to_parquet(file_name)
     con.disconnect()
@@ -556,10 +585,10 @@ def load_rf_and_exchange_data():
     __exchanges = comp_exchanges()
     return crsp_mcti, ff_factors_monthly, __exchanges
 def gen_returns_df(freq):
-    ret_lag_dif_exp = (gen_MMYY_column('datadate') - gen_MMYY_column('datadate', 1)).over(['gvkey','iid']) if freq == 'm' else (col('datadate') - col('datadate').shift(1)).over(['gvkey','iid'])
+    ret_lag_dif_exp = (gen_MMYY_column('datadate') - gen_MMYY_column('datadate', 1)).over(['gvkey','iid']) if freq == 'm' else ((col('datadate') - col('datadate').shift(1)).over(['gvkey','iid'])/86_400_000).cast(pl.Int64)
+
     base = pl.scan_parquet(f'__comp_{freq}sf.parquet')
     __returns = (base.filter((col('ri').is_not_null()) & (col('prcstd').is_in([3, 4, 10])))
-                     .select(['gvkey','iid','datadate','ri','ri_local','prcstd','curcdd'])
                      .unique(['gvkey','iid','datadate'])
                      .sort(['gvkey', 'iid', 'datadate'])
                      .with_columns(ret           = col('ri').pct_change().over(['gvkey','iid']),
@@ -567,7 +596,10 @@ def gen_returns_df(freq):
                                    ret_lag_dif   = ret_lag_dif_exp,
                                    lagged_iid    = col('iid').shift(1).over(['gvkey','iid']),
                                    lagged_curcdd = col('curcdd').shift(1).over(['gvkey','iid']))
-                     .with_columns(ret_local = pl.when((col('iid') == col('lagged_iid')) & (col('curcdd') != col('lagged_curcdd'))).then(col('ret')).otherwise(col('ret_local'))))
+                     .with_columns(ret_local = pl.when((col('iid') == col('lagged_iid')) & (col('curcdd') != col('lagged_curcdd'))).then(col('ret')).otherwise(col('ret_local')))
+                     .with_columns(ret_local = pl.when(col('ret_local').is_infinite() | col('ret_local').is_nan()).then(None).otherwise(col('ret_local')),
+                                   ret       = pl.when(col('ret').is_infinite() | col('ret').is_nan()).then(None).otherwise(col('ret')))
+                     .select(['gvkey','iid','datadate','ret','ret_local','ret_lag_dif']))
     return __returns.collect()
 def gen_delist_df(__returns):
     __sec_info = pl.read_parquet('Raw_data_dfs/__sec_info.parquet')
@@ -624,7 +656,7 @@ def add_MMYY_column_drop_original(df, var): return df.with_columns(merge_aux = g
 @measure_time
 def prepare_crsp_sf(freq):
     merge_vars = ['permno', 'merge_aux'] if (freq == 'm') else ['permno', 'date']
-    __crsp_sf = (pl.scan_parquet(f'WRDS_files/__crsp_sf_{freq}.parquet')
+    __crsp_sf = (pl.scan_parquet(f'Raw_data_dfs/__crsp_sf_{freq}.parquet')
                    .with_columns([col(var).cast(pl.Float64) for var in ['prc', 'ret', 'retx', 'prc_high', 'prc_low']] +\
                                  [col('vol').cast(pl.Int64)])
                    .with_columns(adj_trd_vol_NASDAQ('date', 'vol', 'exchcd', 3))
@@ -641,9 +673,9 @@ def prepare_crsp_sf(freq):
     c6 = col('dlret').is_not_null()
     c7 = (c5 & c6)
     crsp_sedelist_aux_col = [gen_MMYY_column('dlstdt').alias('merge_aux')] if (freq == 'm') else [col('dlstdt').alias('date')]
-    crsp_sedelist = pl.scan_parquet(f'WRDS_files/crsp_{freq}sedelist.parquet').with_columns(crsp_sedelist_aux_col)
-    crsp_mcti = add_MMYY_column_drop_original(pl.scan_parquet('WRDS_files/crsp_mcti_t30ret.parquet'), 'caldt')
-    ff_factors_monthly = add_MMYY_column_drop_original(pl.scan_parquet('WRDS_files/ff_factors_monthly.parquet'), 'date')
+    crsp_sedelist = pl.scan_parquet(f'Raw_data_dfs/crsp_{freq}sedelist.parquet').with_columns(crsp_sedelist_aux_col)
+    crsp_mcti = add_MMYY_column_drop_original(pl.scan_parquet('Raw_data_dfs/crsp_mcti_t30ret.parquet'), 'caldt')
+    ff_factors_monthly = add_MMYY_column_drop_original(pl.scan_parquet('Raw_data_dfs/ff_factors_monthly.parquet'), 'date')
 
     me_company_exp = (pl.when(pl.count('me').over(['permco', 'date']) != 0)
                         .then(pl.coalesce(['me',0.]).sum().over(['permco', 'date']))
@@ -672,7 +704,7 @@ def prepare_crsp_sfs_for_merging():
                                 excntry     = pl.lit('USA'),
                                 common      = (col('shrcd').is_in([10, 11, 12]).fill_null(bo_false())).cast(pl.Int32),
                                 primary_sec = pl.lit(1),
-                                comp_tpci   = pl.lit(''),
+                                comp_tpci   = pl.lit(None).cast(pl.Utf8),
                                 comp_exchg  = pl.lit(None).cast(pl.Int64),
                                 curcd       = pl.lit('USD'),
                                 fx          = pl.lit(1.),
@@ -735,8 +767,8 @@ def prepare_comp_sfs_for_merging():
                                 common      = pl.when(col('tpci') == '0').then(pl.lit(1)).otherwise(pl.lit(0)),
                                 bidask      = pl.when(col('prcstd') == 4).then(pl.lit(1)).otherwise(pl.lit(0)),
                                 eom         = col('datadate').dt.month_end(),
-                                source_crsp = pl.lit(0),
-                                ret_lag_dif = (col('ret_lag_dif')/86_400_000).cast(pl.Int64))
+                                source_crsp = pl.lit(0)
+                                )
                   .rename({'curcdd'  : 'curcd',
                            'datadate': 'date',
                            'ajexdi'  : 'adjfct',
@@ -753,21 +785,20 @@ def gen_temp_sf(freq, crsp_df, comp_df):
                     'me','dolvol','tvol','prc','prc_high','prc_low','ret_local','ret','ret_exc','ret_lag_dif','source_crsp']
     sf_world = pl.concat([crsp_df.select(cols_to_keep), comp_df.select(cols_to_keep)], how = 'vertical_relaxed')
     if freq == 'm':
-        c1 = (col('ret_lag_dif') == 1) & (col('id_lead1m') == col('id'))
         sf_world = (sf_world.sort(['id', 'eom'])
-                            .with_columns(ret_exc_lead1m     = col('ret_exc').shift(-1).over('id'),
-                                          id_lead1m          = col('id').shift(-1),
-                                          ret_lag_dif_lead1m = col('ret_lag_dif').shift(-1).over('id'))
-                            .with_columns(ret_exc_lead1m     = pl.when(c1).then(col('ret_exc_lead1m')).otherwise(fl_none()))
-                            .drop(['id_lead1m', 'ret_lag_dif_lead1m']))
+                            .with_columns(ret_exc_lead1m = pl.when(col('ret_lag_dif').shift(-1).over('id') != 1)
+                                                             .then(None)
+                                                             .otherwise(col('ret_exc').shift(-1).over('id'))
+                                                             )
+        )
     return sf_world
 def add_obs_main_to_sf_and_write_file(freq, sf_df, obs_main):
     file_path = '__msf_world.parquet' if freq == 'm' else 'world_dsf.parquet'
     sort_vars = ['id','eom'] if freq == 'm' else ['id','date']
-    (sf_df#.filter(col('eom')  >= pl.datetime(1999, 12, 31))
+    (sf_df.filter(col('eom')  >= pl.datetime(1999, 12, 31))
           .join(obs_main, on = ['id','eom'], how = 'left')
           .unique(sort_vars)
-          #.sort(sort_vars)
+          .sort(sort_vars)
           .collect(streaming = True)
           .write_parquet(file_path))
     
@@ -819,9 +850,8 @@ def hgics_join():
     comp_hgics('national')
     global_data = pl.scan_parquet('g_hgics.parquet')
     local_data = pl.scan_parquet('na_hgics.parquet')
-    gjoin = local_data.join(global_data, on = ['gvkey', 'date'], how = 'outer_coalesce')
-    gjoin = (gjoin.with_columns(gics = pl.coalesce(['gics', 'gics_right']))
-                  .select(['gvkey', 'date', 'gics'])
+    gjoin = local_data.join(global_data, on = ['gvkey', 'date'], how = 'full', coalesce = True)
+    gjoin = (gjoin.select(['gvkey', 'date', pl.coalesce(['gics', 'gics_right']).alias('gics')])
                   .unique(['gvkey','date'])
                   .sort(['gvkey','date']))
     gjoin.collect().write_parquet('comp_hgics.parquet')
@@ -831,12 +861,16 @@ def comp_sic_naics():
     funda_data  = pl.scan_parquet('Raw_data_dfs/sic_naics_na.parquet')
     gfunda_data = pl.scan_parquet('Raw_data_dfs/sic_naics_gl.parquet')
     funda_data = funda_data.filter(~( (col('gvkey') == '175650') & (col('datadate') == pl.date(2005,12,31)) & (col('naics').is_null() )))
-    comp = funda_data.join(gfunda_data, on = ['gvkey', 'datadate'], how = 'outer_coalesce').sort(['gvkey','datadate'])
-    comp = (comp.with_columns(sic = pl.coalesce(['sic', 'sic_right']), naics = pl.coalesce(['naics', 'naics_right']), end_date = col('datadate').shift(-1).over('gvkey'))
+    comp = funda_data.join(gfunda_data, on = ['gvkey', 'datadate'], how='full', coalesce = True).sort(['gvkey','datadate'])
+    comp = (comp.with_columns(sic      = pl.coalesce(['sic', 'sic_right']), 
+                              naics    = pl.coalesce(['naics', 'naics_right']), 
+                              end_date = col('datadate').shift(-1).over('gvkey'))
                 .with_columns(end_date = pl.when(col('end_date').is_null()).then(col('datadate')).otherwise(col('end_date')))
-                .with_columns(date = pl.date_ranges('datadate', 'end_date', closed = 'left'))
+                .with_columns(date     = pl.date_ranges('datadate', 'end_date', closed = 'left'))
                 .explode('date')
-                .with_columns(date = pl.when(col('datadate') == col('end_date')).then(col('datadate')).otherwise(col('date')))
+                .with_columns(date     = pl.when(col('datadate') == col('end_date'))
+                                           .then(col('datadate'))
+                                           .otherwise(col('date')))
                 .select(['gvkey', 'date', 'sic', 'naics'])
                 .unique(['gvkey', 'date'])
                 .sort(['gvkey', 'date']))
@@ -848,7 +882,7 @@ def comp_industry():
     hgics_join()
     comp_other = pl.read_parquet('comp_other.parquet')
     comp_gics = pl.read_parquet('comp_hgics.parquet')
-    join = comp_gics.join(comp_other, on=['gvkey', 'date'], how='outer_coalesce').sort(['gvkey', 'date'])
+    join = comp_gics.join(comp_other, on=['gvkey', 'date'], how='full', coalesce = True).sort(['gvkey', 'date'])
     join = (join.with_columns(aux_date = (col('date').shift(-1).dt.offset_by('-1d')).over('gvkey'))
                 .with_columns(aux_date = pl.when(col('aux_date').is_null()).then(col('date')).otherwise('aux_date')))
     gaps = (join.filter(col('date') != col('aux_date'))
@@ -2994,5 +3028,4 @@ def dimsonbeta(df, sfx, __min):
             .with_columns(pl.sum_horizontal('mktrf', 'mktrf_ld1', 'mktrf_lg1').alias(f'beta_dimson{sfx}'))
             .select(['id_int', 'group_number', f'beta_dimson{sfx}']))
     return df
-
 
