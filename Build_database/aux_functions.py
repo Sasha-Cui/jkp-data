@@ -830,7 +830,7 @@ def crsp_industry():
 def comp_hgics(lib):
     paths = {'raw data': {'national': 'Raw_data_dfs/comp_hgics_na.parquet', 'global': 'Raw_data_dfs/comp_hgics_gl.parquet'},
              'output' : {'national': 'na_hgics.parquet', 'global': 'g_hgics.parquet'}}
-    data = pl.read_parquet(paths['raw data'][lib]).sort(['gvkey', 'indfrom'])
+    data = pl.read_parquet(paths['raw data'][lib])#.sort(['gvkey', 'indfrom'])
     data = data.with_columns(gics = pl.when(col('gics').is_null()).then(-999).otherwise(col('gics')),
                              n = pl.len().over('gvkey'),
                              n_aux = pl.cum_count('gvkey').over('gvkey'))
@@ -858,39 +858,143 @@ def hgics_join():
     
 @measure_time
 def comp_sic_naics():
-    funda_data  = pl.scan_parquet('Raw_data_dfs/sic_naics_na.parquet')
-    gfunda_data = pl.scan_parquet('Raw_data_dfs/sic_naics_gl.parquet')
-    funda_data = funda_data.filter(~( (col('gvkey') == '175650') & (col('datadate') == pl.date(2005,12,31)) & (col('naics').is_null() )))
-    comp = funda_data.join(gfunda_data, on = ['gvkey', 'datadate'], how='full', coalesce = True).sort(['gvkey','datadate'])
-    comp = (comp.with_columns(sic      = pl.coalesce(['sic', 'sic_right']), 
-                              naics    = pl.coalesce(['naics', 'naics_right']), 
-                              end_date = col('datadate').shift(-1).over('gvkey'))
-                .with_columns(end_date = pl.when(col('end_date').is_null()).then(col('datadate')).otherwise(col('end_date')))
-                .with_columns(date     = pl.date_ranges('datadate', 'end_date', closed = 'left'))
-                .explode('date')
-                .with_columns(date     = pl.when(col('datadate') == col('end_date'))
+    con = ibis.duckdb.connect(threads = os.cpu_count())
+    con.create_table('sic_naics_na', con.read_parquet('Raw_data_dfs/sic_naics_na.parquet'))
+    con.create_table('sic_naics_gl', con.read_parquet('Raw_data_dfs/sic_naics_gl.parquet'))
+    con.raw_sql("""
+                CREATE TABLE comp2 AS
+                SELECT *
+                FROM sic_naics_na
+                WHERE NOT (
+                    gvkey   = '175650'
+                    AND datadate = DATE '2005-12-31'
+                    AND naics IS NULL
+                );
+                
+                CREATE TABLE comp3 AS
+                SELECT *
+                FROM sic_naics_gl;
+                
+                CREATE TABLE comp4 AS
+                SELECT
+                    a.gvkey    AS gvkeya,
+                    a.datadate AS datea,
+                    a.sic      AS sica,
+                    a.naics    AS naicsa,
+                    b.gvkey    AS gvkeyb,
+                    b.datadate AS dateb,
+                    b.sic      AS sicb,
+                    b.naics    AS naicsb
+                FROM comp2 AS a
+                FULL OUTER JOIN comp3 AS b
+                ON a.gvkey    = b.gvkey
+                AND a.datadate = b.datadate;
+                
+                CREATE TABLE comp5 AS
+                WITH t AS (
+                SELECT
+                    LPAD(COALESCE(gvkeya, gvkeyb), 6, '0') AS gvkey,
+                    COALESCE(datea, dateb)            AS date,
+                    COALESCE(sica, sicb)              AS sic,
+                    COALESCE(naicsa, naicsb)          AS naics
+                FROM comp4
+                ORDER BY
+                    gvkey,
+                    date,
+                    sic DESC
+                )
+                SELECT DISTINCT ON (gvkey, date)
+                    t.gvkey,
+                    t.date as datadate,
+                    t.sic,
+                    t.naics
+                FROM t
+                ORDER BY
+                t.gvkey,
+                t.date,
+                t.sic 
+                ;
+    """)
+    comp = (con.table('comp5')
+               .to_polars()
+               .lazy()
+               .sort(['gvkey', 'datadate'])
+               .with_columns(end_date = col('datadate').shift(-1).over('gvkey'))
+               .with_columns(end_date = pl.when(col('end_date').is_null())
+                                           .then(col('datadate'))
+                                           .otherwise(col('end_date')))
+               .with_columns(date     = pl.date_ranges('datadate', 'end_date', closed = 'left'))
+               .explode('date')
+               .with_columns(date     = pl.when(col('datadate') == col('end_date'))
                                            .then(col('datadate'))
                                            .otherwise(col('date')))
-                .select(['gvkey', 'date', 'sic', 'naics'])
-                .unique(['gvkey', 'date'])
-                .sort(['gvkey', 'date']))
+               .select(['gvkey', 'date', 'sic', 'naics'])
+               .unique(['gvkey', 'date'])
+               .sort(['gvkey', 'date']))
     comp.collect().write_parquet('comp_other.parquet')
-
+    con.disconnect()
 @measure_time
 def comp_industry():
     comp_sic_naics()
     hgics_join()
-    comp_other = pl.read_parquet('comp_other.parquet')
-    comp_gics = pl.read_parquet('comp_hgics.parquet')
-    join = comp_gics.join(comp_other, on=['gvkey', 'date'], how='full', coalesce = True).sort(['gvkey', 'date'])
-    join = (join.with_columns(aux_date = (col('date').shift(-1).dt.offset_by('-1d')).over('gvkey'))
-                .with_columns(aux_date = pl.when(col('aux_date').is_null()).then(col('date')).otherwise('aux_date')))
-    gaps = (join.filter(col('date') != col('aux_date'))
-                .select(['gvkey', pl.date_ranges('date','aux_date', closed = 'right').alias('date')])
-                .explode('date'))
-    join = join.filter(col('date') == col('aux_date')).drop('aux_date')
-    join = pl.concat([join, gaps], how = 'diagonal').unique(['gvkey', 'date']).sort(['gvkey', 'date'])
-    join.write_parquet('comp_ind.parquet')
+    os.system('rm -f aux_comp_ind.ddb')
+    con = ibis.duckdb.connect('aux_comp_ind.ddb', threads = os.cpu_count())
+    con.create_table('comp_other', con.read_parquet('comp_other.parquet'))
+    con.create_table('comp_gics', con.read_parquet('comp_hgics.parquet'))
+    con.raw_sql("""
+                DROP TABLE IF EXISTS join_table;
+                CREATE TABLE join_table AS
+                SELECT          *,
+                                COALESCE( LEAD(date) OVER (PARTITION BY gvkey ORDER BY date) - INTERVAL '1 day', date )::DATE AS aux_date
+                FROM            comp_gics
+                FULL OUTER JOIN comp_other
+                USING           (gvkey, date);
+
+                DROP TABLE IF EXISTS gap_dates;
+                CREATE TABLE gap_dates AS
+                SELECT *
+                FROM join_table
+                WHERE date <> aux_date;
+
+                DROP TABLE IF EXISTS gaps;
+                CREATE TABLE gaps AS
+                WITH full_span AS (
+                SELECT
+                    j.gvkey, gs.gap_date::DATE AS date,
+                    FROM gap_dates as j
+                    CROSS JOIN LATERAL
+                    generate_series(j.date, j.aux_date, INTERVAL '1 day') AS gs(gap_date)
+                    ORDER BY gvkey, date
+                )
+                SELECT
+                fs.gvkey, fs.date, gd.gics, gd.sic, gd.naics
+                FROM full_span fs
+                LEFT JOIN gap_dates gd
+                ON gd.gvkey = fs.gvkey
+                AND gd.date  = fs.date
+                ORDER BY fs.gvkey, fs.date;
+
+                DROP TABLE IF EXISTS continuous;
+                CREATE TABLE continuous AS
+                SELECT *
+                FROM join_table
+                WHERE date = aux_date;
+
+                DROP TABLE IF EXISTS merged_data;
+                CREATE TABLE merged_data AS
+                SELECT gvkey, date, gics, sic, naics FROM continuous
+                UNION
+                SELECT gvkey, date, gics, sic, naics FROM gaps;
+
+                DROP TABLE IF EXISTS comp_industry;
+                CREATE TABLE comp_industry AS
+                SELECT DISTINCT ON (gvkey, date)
+                    *
+                FROM merged_data
+                ORDER BY (gvkey, date);
+    """)
+    con.table('comp_industry').to_parquet('comp_ind.parquet')
+    con.disconnect()
 
 @measure_time
 def ff_ind_class(data_path, ff_grps):
@@ -2089,7 +2193,8 @@ def market_chars_monthly(data_path, market_ret_path, local_currency = False):
                                       [mom_rev_cols(i,j) for i,j in mom_rev_lags])
            )
     for i in [[1,1], [2,5], [6, 10], [11, 15], [16, 20]]: data = seasonality(data, 'ret_x', i[0], i[1])
-    data = (data#.with_columns([pl.when(col(var) < 1e-10).then(0.).otherwise(col(var)).alias(var) for var in data.collect_schema().names() if col.startswith("div") and col.endswith("me")]) #Change to 0 when(col(var) < 1e-10) then 0. to match SAS precision
+    data = (data.with_columns([pl.when(col(var) < 1e-10).then(0.0).otherwise(col(var)).alias(var)
+                               for var in data.collect_schema().names() if var.startswith("div") and var.endswith("me")]) #Change to 0 when(col(var) < 1e-10) then 0. to match SAS precision
                 .select(['id', 'eom', 'market_equity', col("^div.*me$"), col("^eqnpo.*$"), col("^chcsho.*$"), col("^ret_\d+_\d+$"), col("^seas.*$")])
                 .sort(['id','eom']))
 
