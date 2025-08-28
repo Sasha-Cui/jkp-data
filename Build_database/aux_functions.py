@@ -1262,17 +1262,15 @@ def quarterize(df, var_list):
     list_aux2 = [pl.when(col('count_aux') == 1).then(col(var)).otherwise(col(var + '_q')).alias(var + '_q') for var in var_list] +\
                 [pl.when(col('count_aux') == 1).then(c1).otherwise(c2).alias('del')]
     list_aux3 = [pl.when(col('del')).then(fl_none()).otherwise(col(var + '_q')).alias(var + '_q') for var in var_list]
-    df = (df.sort(['gvkey','fyr','fyearq','fqtr', 'n'])
-            .unique(['gvkey','fyr','fyearq','fqtr'], keep = 'first')
-            .sort(['gvkey','fyr','fyearq','fqtr', 'n'])
+    df = (df.unique(['gvkey','fyr','fyearq','fqtr'])
+            .sort(['gvkey','fyr','fyearq','fqtr'])
             .with_columns(list_aux1)
-            .sort(['gvkey','fyr','fyearq','fqtr', 'n'])
+            .sort(['gvkey','fyr','fyearq','fqtr'])
             .with_columns(list_aux2)
             .with_columns(list_aux3)
             .drop(['del', 'count_aux'])
-            .sort(['gvkey','fyr','fyearq','fqtr', 'n'])
-            .unique(['gvkey','fyr','fyearq','fqtr'], keep = 'first')
-            .sort(['gvkey','fyr','fyearq','fqtr', 'n']))
+            .unique(['gvkey','fyr','fyearq','fqtr'])
+            .sort(['gvkey','fyr','fyearq','fqtr']))
     return df
 def ttm(var): return col(var) + col(var).shift(1) + col(var).shift(2) + col(var).shift(3)
 def cumulate_4q(df, var_list):
@@ -1288,12 +1286,8 @@ def load_raw_fund_table_and_filter(filename, start_date, source_str, mode):
     c1 = (col('indfmt').is_in(['INDL', 'FS'])) if mode == 1 else (col('indfmt') == 'INDL')
     datafmt_val = 'HIST_STD' if mode == 1 else 'STD'
     popsrc_val  = 'I'        if mode == 1 else 'D'
-    if 'curcd' in pl.scan_parquet(filename).collect_schema().names():
-        curcd_col = 'curcd'
-    else:
-        curcd_col = 'curcdq'
     df = (pl.scan_parquet(filename)
-            .with_columns(n = pl.cum_count('gvkey').over(['gvkey', curcd_col]))
+            .with_row_index('n') 
             .filter( c1                              &
                     (col('datafmt') == datafmt_val)  &
                     (col('popsrc')  == popsrc_val)   &
@@ -1383,24 +1377,38 @@ def standardized_accounting_data(coverage, convert_to_usd, me_data_path, include
         __fundq = fundq.select(['gvkey', 'datadate', 'n', 'fyr', 'fyearq', 'fqtr', 'curcdq', 'source'] +\
                                [fl_none().alias(i) for i in ['dvtq','gpq','dvty','gpy','ltdchy','purtshry','wcapty']] +\
                                query_vars)
-    if coverage == 'world': __wfunda, __wfundq = pl.concat([__gfunda, __funda], how = 'diagonal_relaxed'), pl.concat([__gfundq, __fundq], how = 'diagonal_relaxed')
+    if coverage == 'world': 
+        __wfunda = (pl.concat([__gfunda, __funda], how = 'diagonal_relaxed')
+                    .filter(
+                        (pl.len().over(['gvkey', 'datadate']) == 1)
+                        |
+                        ((pl.len().over(['gvkey', 'datadate']) == 2) & (col('source') == 'NA'))
+                            )
+                   )
+        __wfundq = (pl.concat([__gfundq, __fundq], how = 'diagonal_relaxed')
+                    .filter(
+                        (pl.len().over(['gvkey', 'fyr', 'fyearq', 'fqtr']) == 1)
+                        |
+                        ((pl.len().over(['gvkey', 'fyr', 'fyearq', 'fqtr']) == 2) & (col('source') == 'NA'))
+                            )
+                   )
     else: pass
-    if coverage == 'na': aname, qname= __funda, __fundq
+    if coverage == 'na': aname, qname = __funda, __fundq
     elif coverage == 'global': aname, qname = __gfunda, __gfundq
     else: aname, qname = __wfunda, __wfundq
-    #converting to usd if required
+    
     if convert_to_usd == 1:
-        fx = compustat_fx().lazy()
+        fx = pl.read_csv('WRDS_files/fx.csv').select(col('date').cast(pl.Utf8).str.strptime(pl.Date, format = "%Y%m%d").alias('datadate'), 'curcdd', 'fx').lazy()
         __compa = add_fx_and_convert_vars(aname, fx, avars, 'annual')
         __compq = add_fx_and_convert_vars(qname, fx, qvars, 'quarterly')
     else: __compa, __compq = aname, qname
-
+        
     __me_data = load_mkt_equity_data(me_data_path)
-
+    
     yrl_vars = ['cogsq', 'xsgaq', 'xintq', 'dpq', 'txtq', 'xrdq', 'dvq', 'spiq', 'saleq', 'revtq', 'xoprq', 'oibdpq', 'oiadpq', 'ibq', 'niq', 'xidoq', 'nopiq', 'miiq', 'piq', 'xiq','xidocq', 'capxq', 'oancfq', 'ibcq', 'dpcq', 'wcaptq','prstkcq', 'sstkq', 'purtshrq','dsq', 'dltrq', 'ltdchq', 'dlcchq','fincfq', 'fiaoq', 'txbcofq', 'dvtq']
     bs_vars = ['seqq', 'ceqq', 'pstkq', 'icaptq', 'mibq', 'gdwlq', 'req','atq', 'actq', 'invtq', 'rectq', 'ppegtq', 'ppentq', 'aoq', 'acoq', 'intanq', 'cheq', 'ivaoq', 'ivstq', 'ltq', 'lctq', 'dlttq', 'dlcq', 'txpq', 'apq', 'lcoq', 'loq', 'txditcq', 'txdbq']
     __compq = __compq.with_columns([col(var).cast(pl.Int64) for var in ['fyr', 'fyearq', 'fqtr'] if var in __compq.collect_schema().names()])
-
+    
     __compq = (__compq.pipe(quarterize, var_list = qvars_y)
                       .with_columns([pl.coalesce([f'{var[:-1]}q', f'{var[:-1]}y_q']).alias(f'{var[:-1]}q') for var in qvars_y if f'{var[:-1]}q' in __compq.collect_schema().names()] +\
                                     [col(f'{var[:-1]}y_q').alias(f'{var[:-1]}q') for var in qvars_y if f'{var[:-1]}q' not in __compq.collect_schema().names()])
@@ -1413,32 +1421,31 @@ def standardized_accounting_data(coverage, convert_to_usd, me_data_path, include
                       .sort(['gvkey', 'fyr', 'fyearq', 'fqtr', 'n'])
                       .pipe(cumulate_4q, var_list = yrl_vars)
                       .rename({**dict(zip(bs_vars, list(aux[:-1] for aux in bs_vars))), **{'curcdq': 'curcd'}})
-                      .sort(['gvkey', 'datadate', 'fyr', 'n'])
-                      .unique(['gvkey','datadate', 'fyr'], keep='first')
-                      .sort(['gvkey', 'datadate', 'fyr', 'n'])
+                      .sort(['gvkey', 'datadate', 'fyr', 'source'])
+                      .unique(['gvkey','datadate', 'fyr'], keep='last') #This means we prefer source = NA rather than GLOBAL for duplicate observations 
+                      .sort(['gvkey', 'datadate', 'fyr'])
                       .unique(['gvkey', 'datadate'], keep='last')
                       .drop(['fyr', 'fyearq', 'fqtr'])
                       .join(__me_data, how = 'left', left_on = ['gvkey', 'datadate'], right_on = ['gvkey', 'eom'])
-                      .with_columns([fl_none().alias(i) for i in ['gp', 'dltis', 'do', 'dvc', 'ebit', 'ebitda', 'itcb', 'pstkl', 'pstkrv', 'xad', 'xlr', 'emp']])
+                      .with_columns([fl_none().alias(i)  for i in ['gp', 'dltis', 'do', 'dvc', 'ebit', 'ebitda', 'itcb', 'pstkl', 'pstkrv', 'xad', 'xlr', 'emp']])
                       .sort(['gvkey', 'curcd', 'datadate', 'source', 'n'])
                       )
-                      
     
     __compa = (__compa.with_columns(ni_qtr   = fl_none(),
-                                    sale_qtr = fl_none(),
-                                    ocf_qtr  = fl_none(),
-                                    fqtr     = pl.lit(None).cast(pl.Int64),
-                                    fyearq   = pl.lit(None).cast(pl.Int64),
-                                    fyr      = pl.lit(None).cast(pl.Int64))
-                       .join(__me_data, how = 'left', left_on = ['gvkey', 'datadate'], right_on = ['gvkey', 'eom'])
-                       .sort(['gvkey', 'curcd', 'datadate', 'source', 'n']))
-
+                                        sale_qtr = fl_none(),
+                                        ocf_qtr  = fl_none(),
+                                        fqtr     = pl.lit(None).cast(pl.Int64),
+                                        fyearq   = pl.lit(None).cast(pl.Int64),
+                                        fyr      = pl.lit(None).cast(pl.Int64))
+                           .join(__me_data, how = 'left', left_on = ['gvkey', 'datadate'], right_on = ['gvkey', 'eom'])
+                           .sort(['gvkey', 'curcd', 'datadate', 'source', 'n']))
+    
     if include_helpers_vars==1:
         __compq = add_helper_vars(__compq)
         __compa = add_helper_vars(__compa)
-    #Do not use streaming here, gives an error. Default collect
-    __compa.sort(['gvkey', 'datadate', 'n']).unique(['gvkey', 'datadate'], keep = 'first').drop('n').sort(['gvkey', 'datadate']).collect().write_parquet('acc_std_ann.parquet')
-    __compq.sort(['gvkey', 'datadate', 'n']).unique(['gvkey', 'datadate'], keep = 'first').drop('n').sort(['gvkey', 'datadate']).collect().write_parquet('acc_std_qtr.parquet')
+    
+    __compa.unique(['gvkey', 'datadate']).drop('n').sort(['gvkey', 'datadate']).collect().write_parquet('acc_std_ann.parquet')
+    __compq.unique(['gvkey', 'datadate']).drop('n').sort(['gvkey', 'datadate']).collect().write_parquet('acc_std_qtr.parquet')
 
 def expand(data, id_vars, start_date, end_date, freq='day', new_date_name='date'):
     freq_range = '1d' if (freq == 'day') else '1mo'
@@ -2167,6 +2174,11 @@ def add_me_data_and_compute_me_mev_mat_eqdur_vars(df, me_df):
     c_misc = [col('mev').alias('enterprise_value'),
               (pl.when((col('gvkey') == col('gvkey').shift(12)) & (col('mat').shift(12) != 0)).then(col('aliq_x') * col('fx') / col('mat').shift(12)).otherwise(fl_none())).alias('aliq_mat'),
               ((col('ed_cd_w') * col('fx') / col('me_company')) + col('ed_constant') * (col('me_company') - col('ed_cd') * col('fx'))/col('me_company')).alias('eq_dur')]
+    
+    # (df.join(me_df, left_on=['gvkey', 'public_date'], right_on=['gvkey', 'eom'], how='left')
+    #         .select(df.collect_schema().names() + ['me_company'])
+    #         .sort(['gvkey', 'public_date'])).collect().write_parquet('dedup_question2.parquet')
+
     df = (df.join(me_df, left_on=['gvkey', 'public_date'], right_on=['gvkey', 'eom'], how='left')
             .select(df.collect_schema().names() + ['me_company'])
             .sort(['gvkey', 'public_date'])
@@ -2284,6 +2296,7 @@ def create_acc_chars(data_path, output_path, lag_to_public, max_data_lag, __keep
                         .pipe(add_me_data_and_compute_me_mev_mat_eqdur_vars, me_df = me_data))
 
     rename_dict = {"xrd": "rd","xsga": "sga","dlc": "debtst","dltt": "debtlt","oancf": "ocf","ppegt": "ppeg","ppent": "ppen","che": "cash","invt": "inv","rect": "rec","txt": "tax","ivao": "lti","ivst": "sti","sale_qtr": "saleq","ni_qtr": "niq","ocf_qtr": "ocfq"}
+    # rename_cols_and_select_keep_vars(chars_df, rename_dict, __keep_vars, suffix).collect().write_parquet('dedup_question.parquet')
     rename_cols_and_select_keep_vars(chars_df, rename_dict, __keep_vars, suffix)\
                                     .sort(['gvkey', 'public_date'])\
                                     .unique(['gvkey', 'public_date'],keep = 'first')\
