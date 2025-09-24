@@ -453,7 +453,7 @@ def download_wrds_table(conn_obj, table_name, filename, cols = None):
     print('Downloading table:' , table_name)
 
     lib, table = table_name.split('.')
-    t = conn_obj.table(database = lib, name = table)
+    t = conn_obj.table(table, database = lib)
     if cols: t = t.select(cols)
 
     casting_cols = [t[var].cast('int64').name(var) for var in ['permno', 'permco', 'sic', 'sich'] if var in t.columns]
@@ -478,7 +478,7 @@ def check_and_reset_connection(wrds_session, start_time, username, password):
         (wrds_session, start_time) — refreshed connection.
     """
     elapsed_time = time.time() - start_time
-    if elapsed_time >= 45 * 60:
+    if elapsed_time >= 30 * 60:
         wrds_session.disconnect()
         print('The connection to WRDS server needs to be reset to avoid exceeding time limits.')
         for attempt in range(1, 6):  # Attempts 1 to 5
@@ -513,7 +513,7 @@ def download_raw_data_tables(username, password):
         4) Disconnect.
 
     Output:
-        Many Parquet files under Raw_tables/ (Compustat, CRSP, FF, etc.).
+        Parquet files under Raw_tables/ (Compustat, CRSP, FF, etc.).
     """
     table_names = ['comp.exrt_dly'  , 'ff.factors_monthly', 'comp.g_security' , 'comp.security'      ,
                    'comp.r_ex_codes', 'comp.g_sec_history', 'comp.sec_history', 'comp.company'       ,
@@ -525,14 +525,14 @@ def download_raw_data_tables(username, password):
     wrds_session = gen_wrds_connection_object(username, password)
     start_time = time.time()
 
-    for table in table_names: 
-        download_wrds_table(wrds_session, table, 'Raw_tables/' + table.replace('.', '_') + '.parquet')
-        wrds_session, start_time = check_and_reset_connection(wrds_session, start_time, username, password)
+    # for table in table_names: 
+    #     download_wrds_table(wrds_session, table, 'Raw_tables/' + table.replace('.', '_') + '.parquet')
+    #     wrds_session, start_time = check_and_reset_connection(wrds_session, start_time, username, password)
 
     cols_comp_secd = ['gvkey','iid', 'datadate', 'tpci', 'exchg', 'prcstd', 'curcdd', 'prccd', 'ajexdi', 'cshoc', 'prchd', 'prcld', 'cshtrd', 'trfd', 'curcddv', 'div', 'divd', 'divsp']
     cols_comp_g_secd = ['gvkey', 'iid', 'datadate', 'tpci', 'exchg', 'prcstd','curcdd', 'prccd', 'qunit', 'ajexdi', 'cshoc', 'prchd', 'prcld', 'cshtrd','trfd', 'curcddv', 'div', 'divd', 'divsp', 'monthend']
 
-    download_wrds_table(wrds_session, 'comp.secd', 'Raw_tables/comp_secd.parquet', cols_comp_secd)
+    # download_wrds_table(wrds_session, 'comp.secd', 'Raw_tables/comp_secd.parquet', cols_comp_secd)
     wrds_session, start_time = check_and_reset_connection(wrds_session, start_time, username, password)
     download_wrds_table(wrds_session, 'comp.g_secd', 'Raw_tables/comp_g_secd.parquet', cols_comp_g_secd)
 
@@ -815,7 +815,9 @@ def gen_secm_data():
     compustat_fx().rename({'datadate': 'date'}).write_parquet('fx_data.parquet')
     con.create_table('comp_secm'     , con.read_parquet('Raw_tables/comp_secm.parquet'), overwrite = True)
     con.create_table('__firm_shares2', con.read_parquet('__firm_shares2.parquet')      , overwrite = True)
-    con.create_table('fx'            , con.read_parquet('fx_data.parquet')             , overwrite = True)
+    con.creat
+    
+    _table('fx'            , con.read_parquet('fx_data.parquet')             , overwrite = True)
 
     con.raw_sql("""
         DROP TABLE IF EXISTS __comp_secm2;
@@ -1395,17 +1397,15 @@ def add_obs_main_to_sf_and_write_file(freq, sf_df, obs_main):
         Add an observation selection flag (obs_main) and write the final world file.
 
     Steps:
-        1) Filter to dates ≥ 1999-12-31.
-        2) Left-join obs_main; unique and sort by {id,eom} or {id,date}.
-        3) Collect (streaming) and save to '__msf_world.parquet' (monthly) or 'world_dsf.parquet' (daily).
+        1) Left-join obs_main; unique and sort by {id,eom} or {id,date}.
+        2) Collect (streaming) and save to '__msf_world.parquet' (monthly) or 'world_dsf.parquet' (daily).
 
     Output:
         Parquet file with obs_main indicating preferred monthly observation per id-date.
     """
     file_path = '__msf_world.parquet' if freq == 'm' else 'world_dsf.parquet'
     sort_vars = ['id','eom'] if freq == 'm' else ['id','date']
-    (sf_df.filter(col('eom')  >= pl.datetime(1999, 12, 31))
-          .join(obs_main, on = ['id','eom'], how = 'left')
+    (sf_df.join(obs_main, on = ['id','eom'], how = 'left')
           .unique(sort_vars)
           .sort(sort_vars)
           .collect(streaming = True)
