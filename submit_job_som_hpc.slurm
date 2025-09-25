@@ -5,6 +5,7 @@
 #SBATCH --partition=gpunormal
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=128
+#SBATCH --mem=500G
 #SBATCH --time=15:00:00
 #SBATCH --mail-type=ALL
 
