@@ -685,7 +685,7 @@ def gen_comp_dsf():
         prc_local    * fx AS prc,
         prc_high_lcl * fx AS prc_high,
         prc_low_lcl  * fx AS prc_low,
-        (prc_local   * fx) * cshoc AS med,
+        (prc_local   * fx) * cshoc AS me,
         cshtrd       * (prc_local * fx) AS dolvol,
         ri_local     * fx AS ri,
         COALESCE(div, 0)   * fx_div AS div_tot,
