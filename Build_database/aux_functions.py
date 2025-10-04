@@ -5329,7 +5329,7 @@ def rvol(df, sfx, __min):
         LazyFrame with f'rvol{sfx}'.
     """
     df = (df.group_by(['id_int', 'group_number'])
-            .agg(col('ret_exc').std().alias(f'rvol{sfx}')))
+            .agg(col('ret_exc').cast(pl.Float64).std().alias(f'rvol{sfx}')))
     return df
 
 def rmax(df, sfx, __min):
