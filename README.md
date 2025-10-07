@@ -36,14 +36,7 @@ This document provides instructions for creating a dataset based on the paper "I
 
    - Open the `main.py` file inside the 'Build_database' folder and input your WRDS credentials on line 3.
 
-4. **Set Desired End Date**
-
-   - Choose your desired end date and input it on line 4 of the `main.py` file. The date should be in the format of 'Year, Month, Day' and entered as integers. For example, for May 6th, 1992, the input would be:
-     ```python
-     end_date = pl.datetime(1992, 5, 6)
-     ```
-
-5. **Run the Script**
+4. **Run the Script**
 
    - Make sure you have activated your new conda environment.
    - Navigate to the 'Build_database' directory and run the following command from the command line:
@@ -66,9 +59,11 @@ This document provides instructions for creating a dataset based on the paper "I
 
 At the end of the routine, 4 folders should appear: `World_Ret_Monthly`, `World_Data`, `Daily_Returns`, and `Characteristics`. They contain Global Stock Returns and Stock Characteristics.
 
-### Important Notice
-
-Do not unpack the folder into another directory. All files with the `.ft` extension in the folder where `main.py` is executed will be deleted. To avoid any unintended data loss, ensure that you run the script from within the 'Build_database' folder.
+### Notes
+By default, the end date for the data in the code is 2024-12-31. You can change it by setting the date on line 4 of the `main.py` file. The date should be in the format of 'Year, Month, Day' and entered as integers. For example, for May 6th, 1992, the input would be:
+     ```python
+     end_date = pl.datetime(1992, 5, 6)
+     ```
 
 ## Hardware Requirements
 
