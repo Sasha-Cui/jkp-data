@@ -56,7 +56,6 @@ def setup_folder_structure():
     Output:
         Folders created on disk (no return value).
     """
-    os.system('mkdir -p data')
     os.chdir(os.path.join(os.path.dirname(__file__), '..', 'data'))
     os.system('mkdir -p raw_tables raw_data_dfs characteristics return_data accounting_data other_output')
     os.system('mkdir -p return_data/daily_rets_by_country')
