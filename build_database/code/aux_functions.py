@@ -51,13 +51,15 @@ def setup_folder_structure():
         Create the project’s folder structure if missing.
 
     Steps:
-        1) Make directories: Raw_tables, Raw_data_dfs, Characteristics, World_Ret_Monthly,
-        Daily_Returns, World_Data, Accounting_Data, Output.
+        1) Make directories: raw_tables, raw_data_dfs, characteristics, return_data, accounting_data, other_output.
 
     Output:
         Folders created on disk (no return value).
     """
-    os.system('mkdir -p Raw_tables Raw_data_dfs Characteristics World_Ret_Monthly Daily_Returns World_Data Accounting_Data Output')
+    os.system('mkdir -p data')
+    os.chdir(os.path.join(os.path.dirname(__file__), '..', 'data'))
+    os.system('mkdir -p raw_tables raw_data_dfs characteristics return_data accounting_data other_output')
+    os.system('mkdir -p return_data/daily_rets_by_country')
 
 def collect_and_write(df, filename, collect_streaming = False):
     """
@@ -204,14 +206,14 @@ def gen_firmshares():
         2) Filter to INDL/STD/D/C rows with non-null shares & adj. factors.
         3) SELECT {gvkey, datadate, cshoq→csho_fund, ajexq→ajex_fund} from FUNDQ.
         4) UNION ALL with FUNDA {csho→csho_fund, ajex→ajex_fund}.
-        5) Write to Raw_data_dfs/__firm_shares1.parquet.
+        5) Write to raw_data_dfs/__firm_shares1.parquet.
 
     Output:
-        Parquet: Raw_data_dfs/__firm_shares1.parquet (gvkey, datadate, csho_fund, ajex_fund).
+        Parquet: raw_data_dfs/__firm_shares1.parquet (gvkey, datadate, csho_fund, ajex_fund).
     """
     con = ibis.duckdb.connect(threads = os.cpu_count())
-    con.create_table('comp_fundq', con.read_parquet('Raw_tables/comp_fundq.parquet'))
-    con.create_table('comp_funda', con.read_parquet('Raw_tables/comp_funda.parquet').rename({"at_": "at"}))
+    con.create_table('comp_fundq', con.read_parquet('raw_tables/comp_fundq.parquet'))
+    con.create_table('comp_funda', con.read_parquet('raw_tables/comp_funda.parquet').rename({"at_": "at"}))
     con.raw_sql("""
     CREATE TABLE __firm_shares1 AS
 
@@ -225,7 +227,7 @@ def gen_firmshares():
     FROM comp_funda
     WHERE indfmt = 'INDL' AND datafmt = 'STD' AND popsrc = 'D' AND consol = 'C' AND csho IS NOT NULL AND ajex IS NOT NULL;
     """)
-    con.table('__firm_shares1').to_parquet('Raw_data_dfs/__firm_shares1.parquet')
+    con.table('__firm_shares1').to_parquet('raw_data_dfs/__firm_shares1.parquet')
     con.disconnect()
 def gen_prihist_files():
     """
@@ -237,14 +239,14 @@ def gen_prihist_files():
         1) Load comp_sec_history and comp_g_sec_history into DuckDB.
         2) Create three tables by item code: PRIHISTROW (global), PRIHISTUSA (NA), PRIHISTCAN (NA).
         3) Keep gvkey, itemvalue→flag, effdate, thrudate.
-        4) Write each to Raw_data_dfs as separate Parquet files.
+        4) Write each to raw_data_dfs as separate Parquet files.
 
     Output:
         Parquets: __prihistrow.parquet, __prihistusa.parquet, __prihistcan.parquet.
     """
     con = ibis.duckdb.connect(threads = os.cpu_count())
-    con.create_table('comp_sec_history', con.read_parquet('Raw_tables/comp_sec_history.parquet'))
-    con.create_table('comp_g_sec_history', con.read_parquet('Raw_tables/comp_g_sec_history.parquet'))
+    con.create_table('comp_sec_history', con.read_parquet('raw_tables/comp_sec_history.parquet'))
+    con.create_table('comp_g_sec_history', con.read_parquet('raw_tables/comp_g_sec_history.parquet'))
     con.raw_sql("""
     CREATE TABLE __prihistrow AS
     SELECT gvkey,
@@ -271,9 +273,9 @@ def gen_prihist_files():
     WHERE item = 'PRIHISTCAN';
     """)
 
-    con.table('__prihistrow').to_parquet('Raw_data_dfs/__prihistrow.parquet')
-    con.table('__prihistusa').to_parquet('Raw_data_dfs/__prihistusa.parquet')
-    con.table('__prihistcan').to_parquet('Raw_data_dfs/__prihistcan.parquet')
+    con.table('__prihistrow').to_parquet('raw_data_dfs/__prihistrow.parquet')
+    con.table('__prihistusa').to_parquet('raw_data_dfs/__prihistusa.parquet')
+    con.table('__prihistcan').to_parquet('raw_data_dfs/__prihistcan.parquet')
     con.disconnect()
 def gen_fx1():
     """
@@ -287,10 +289,10 @@ def gen_fx1():
         4) DISTINCT rows and write out.
 
     Output:
-        Parquet: Raw_data_dfs/__fx1.parquet (curcdd, datadate, fx to USD).
+        Parquet: raw_data_dfs/__fx1.parquet (curcdd, datadate, fx to USD).
     """
     con = ibis.duckdb.connect(threads = os.cpu_count())
-    con.create_table('comp_exrt_dly', con.read_parquet('Raw_tables/comp_exrt_dly.parquet'))
+    con.create_table('comp_exrt_dly', con.read_parquet('raw_tables/comp_exrt_dly.parquet'))
     con.raw_sql("""
     CREATE TABLE __fx1 AS
     SELECT DISTINCT
@@ -304,7 +306,7 @@ def gen_fx1():
     WHERE a.fromcurd = 'GBP'
     AND b.tocurd  = 'USD';
     """)
-    con.table('__fx1').to_parquet('Raw_data_dfs/__fx1.parquet')
+    con.table('__fx1').to_parquet('raw_data_dfs/__fx1.parquet')
     con.disconnect()
 @measure_time
 def gen_raw_data_dfs():
@@ -318,50 +320,50 @@ def gen_raw_data_dfs():
         security info (NA & Global), T-bill return, FF monthly factors, exchange code map,
         exchange→country map, company headers (NA+Global), and CRSP security files (m & d).
         3) Standardize types/columns, sort/deduplicate where needed.
-        4) Write all to Raw_data_dfs/*.parquet.
+        4) Write all to raw_data_dfs/*.parquet.
 
     Output:
-        Multiple helper Parquets under Raw_data_dfs/ used in later pipelines.
+        Multiple helper Parquets under raw_data_dfs/ used in later pipelines.
     """
     gen_firmshares()
-    sic_naics_na = sic_naics_aux('Raw_tables/comp_funda.parquet')
-    collect_and_write(sic_naics_na, 'Raw_data_dfs/sic_naics_na.parquet')
-    sic_naics_gl = sic_naics_aux('Raw_tables/comp_g_funda.parquet')
-    collect_and_write(sic_naics_gl, 'Raw_data_dfs/sic_naics_gl.parquet')
-    permno0 = (pl.scan_parquet('Raw_tables/crsp_dsenames.parquet')
+    sic_naics_na = sic_naics_aux('raw_tables/comp_funda.parquet')
+    collect_and_write(sic_naics_na, 'raw_data_dfs/sic_naics_na.parquet')
+    sic_naics_gl = sic_naics_aux('raw_tables/comp_g_funda.parquet')
+    collect_and_write(sic_naics_gl, 'raw_data_dfs/sic_naics_gl.parquet')
+    permno0 = (pl.scan_parquet('raw_tables/crsp_dsenames.parquet')
                 .select([col('permno').cast(pl.Int64), col('permco').cast(pl.Int64), 'namedt',
                          'nameendt', col('siccd').cast(pl.Int64).alias('sic'), col('naics').cast(pl.Int64)])
                 .unique()
                 .sort(['permno', 'namedt', 'nameendt']))
-    collect_and_write(permno0, 'Raw_data_dfs/permno0.parquet')
-    comp_hgics_na = comp_hgics_aux('Raw_tables/comp_co_hgic.parquet')
-    collect_and_write(comp_hgics_na, 'Raw_data_dfs/comp_hgics_na.parquet')
-    comp_hgics_gl = comp_hgics_aux('Raw_tables/comp_g_co_hgic.parquet')
-    collect_and_write(comp_hgics_gl, 'Raw_data_dfs/comp_hgics_gl.parquet')
-    crsp_dsedelist = (pl.scan_parquet('Raw_tables/crsp_dsedelist.parquet')
+    collect_and_write(permno0, 'raw_data_dfs/permno0.parquet')
+    comp_hgics_na = comp_hgics_aux('raw_tables/comp_co_hgic.parquet')
+    collect_and_write(comp_hgics_na, 'raw_data_dfs/comp_hgics_na.parquet')
+    comp_hgics_gl = comp_hgics_aux('raw_tables/comp_g_co_hgic.parquet')
+    collect_and_write(comp_hgics_gl, 'raw_data_dfs/comp_hgics_gl.parquet')
+    crsp_dsedelist = (pl.scan_parquet('raw_tables/crsp_dsedelist.parquet')
                         .select(['dlret', 'dlstcd', col('permno').cast(pl.Int64), 'dlstdt']))
-    collect_and_write(crsp_dsedelist, 'Raw_data_dfs/crsp_dsedelist.parquet')
-    crsp_msedelist = (pl.scan_parquet('Raw_tables/crsp_msedelist.parquet')
+    collect_and_write(crsp_dsedelist, 'raw_data_dfs/crsp_dsedelist.parquet')
+    crsp_msedelist = (pl.scan_parquet('raw_tables/crsp_msedelist.parquet')
                         .select(['dlret', 'dlstcd', col('permno').cast(pl.Int64), 'dlstdt']))
-    collect_and_write(crsp_msedelist, 'Raw_data_dfs/crsp_msedelist.parquet')
-    __sec_info = pl.concat([sec_info_aux('Raw_tables/comp_security.parquet'), sec_info_aux('Raw_tables/comp_g_security.parquet')])
-    collect_and_write(__sec_info, 'Raw_data_dfs/__sec_info.parquet')
-    crsp_mcti_t30ret = (pl.scan_parquet('Raw_tables/crsp_mcti.parquet')
+    collect_and_write(crsp_msedelist, 'raw_data_dfs/crsp_msedelist.parquet')
+    __sec_info = pl.concat([sec_info_aux('raw_tables/comp_security.parquet'), sec_info_aux('raw_tables/comp_g_security.parquet')])
+    collect_and_write(__sec_info, 'raw_data_dfs/__sec_info.parquet')
+    crsp_mcti_t30ret = (pl.scan_parquet('raw_tables/crsp_mcti.parquet')
                         .select(['caldt','t30ret']))
-    collect_and_write(crsp_mcti_t30ret, 'Raw_data_dfs/crsp_mcti_t30ret.parquet')
-    ff_factors_monthly = (pl.scan_parquet('Raw_tables/ff_factors_monthly.parquet')
+    collect_and_write(crsp_mcti_t30ret, 'raw_data_dfs/crsp_mcti_t30ret.parquet')
+    ff_factors_monthly = (pl.scan_parquet('raw_tables/ff_factors_monthly.parquet')
                             .select(['date', 'rf']))
-    collect_and_write(ff_factors_monthly, 'Raw_data_dfs/ff_factors_monthly.parquet')
-    comp_r_ex_codes = (pl.scan_parquet('Raw_tables/comp_r_ex_codes.parquet')
+    collect_and_write(ff_factors_monthly, 'raw_data_dfs/ff_factors_monthly.parquet')
+    comp_r_ex_codes = (pl.scan_parquet('raw_tables/comp_r_ex_codes.parquet')
                             .select(['exchgdesc', 'exchgcd']))
-    collect_and_write(comp_r_ex_codes, 'Raw_data_dfs/comp_r_ex_codes.parquet')
-    __ex_country1 = pl.concat([ex_country_aux('Raw_tables/comp_g_security.parquet'), ex_country_aux('Raw_tables/comp_security.parquet')])
-    collect_and_write(__ex_country1, 'Raw_data_dfs/__ex_country1.parquet')
-    header_aux('Raw_tables/comp_company.parquet', 'Raw_tables/comp_g_company.parquet', 'Raw_data_dfs/__header.parquet')
+    collect_and_write(comp_r_ex_codes, 'raw_data_dfs/comp_r_ex_codes.parquet')
+    __ex_country1 = pl.concat([ex_country_aux('raw_tables/comp_g_security.parquet'), ex_country_aux('raw_tables/comp_security.parquet')])
+    collect_and_write(__ex_country1, 'raw_data_dfs/__ex_country1.parquet')
+    header_aux('raw_tables/comp_company.parquet', 'raw_tables/comp_g_company.parquet', 'raw_data_dfs/__header.parquet')
     gen_prihist_files()
     gen_fx1()
-    gen_crsp_sf('m').to_parquet('Raw_data_dfs/__crsp_sf_m.parquet')
-    gen_crsp_sf('d').to_parquet('Raw_data_dfs/__crsp_sf_d.parquet')
+    gen_crsp_sf('m').to_parquet('raw_data_dfs/__crsp_sf_m.parquet')
+    gen_crsp_sf('d').to_parquet('raw_data_dfs/__crsp_sf_d.parquet')
 
 def gen_crsp_sf(freq):
     """
@@ -380,9 +382,9 @@ def gen_crsp_sf(freq):
         Ibis table (not written) with standardized CRSP {m|d} security fields.
     """
     con = ibis.duckdb.connect(threads = os.cpu_count())
-    sf = con.read_parquet(f'Raw_tables/crsp_{freq}sf.parquet')
-    senames = con.read_parquet(f'Raw_tables/crsp_{freq}senames.parquet')
-    ccmxpf_lnkhist = con.read_parquet('Raw_tables/crsp_ccmxpf_lnkhist.parquet')
+    sf = con.read_parquet(f'raw_tables/crsp_{freq}sf.parquet')
+    senames = con.read_parquet(f'raw_tables/crsp_{freq}senames.parquet')
+    ccmxpf_lnkhist = con.read_parquet('raw_tables/crsp_ccmxpf_lnkhist.parquet')
     sf_senames_join = sf.join(senames,
                               how = 'left',
                               predicates = [(sf.permno == senames.permno  ),
@@ -464,16 +466,16 @@ def download_wrds_table(conninfo, duckdb_conn, table_name, filename):
 def download_raw_data_tables(username, password):
     """
     Description:
-        Bulk-download core WRDS tables to Raw_tables and a few curated variants with column subsets.
+        Bulk-download core WRDS tables to raw_tables and a few curated variants with column subsets.
 
     Steps:
         1) Connect to WRDS; iterate through a fixed list of library.tables.
-        2) For each table: download to Raw_tables/lib_table.parquet; periodically reset connection.
+        2) For each table: download to raw_tables/lib_table.parquet; periodically reset connection.
         3) Additionally fetch comp.secd and comp.g_secd with curated columns.
         4) Disconnect.
 
     Output:
-        Parquet files under Raw_tables/ (Compustat, CRSP, FF, etc.).
+        Parquet files under raw_tables/ (Compustat, CRSP, FF, etc.).
     """
     table_names = ['comp.exrt_dly'  , 'ff.factors_monthly', 'comp.g_security' , 'comp.security'      ,
                    'comp.r_ex_codes', 'comp.g_sec_history', 'comp.sec_history', 'comp.company'       ,
@@ -490,7 +492,7 @@ def download_raw_data_tables(username, password):
 
     for table in table_names:
         # print(f"Downloading WRDS table: {table}", flush=True)
-        download_wrds_table(wrds_session_data, con, table, 'Raw_tables/' + table.replace('.', '_') + '.parquet')
+        download_wrds_table(wrds_session_data, con, table, 'raw_tables/' + table.replace('.', '_') + '.parquet')
 
     con.close()
 
@@ -507,7 +509,7 @@ def prepare_comp_sf(freq):
     Output:
         Intermediate Comp security files written by downstream helpers (no direct return).
     """
-    populate_own('Raw_data_dfs/__firm_shares1.parquet', 'gvkey', 'datadate', 'ddate')
+    populate_own('raw_data_dfs/__firm_shares1.parquet', 'gvkey', 'datadate', 'ddate')
     gen_comp_dsf()
     if freq == 'both':
         process_comp_sf1('d')
@@ -558,7 +560,7 @@ def compustat_fx():
         Polars DataFrame with columns {datadate, curcdd, fx} at daily frequency (to USD).
     """
     aux = pl.DataFrame({'curcdd': 'USD','datadate': '1950-01-01','fx': 1.0}).with_columns(col('datadate').str.to_date('%Y-%m-%d')).lazy()
-    __fx1 = pl.scan_parquet('Raw_data_dfs/__fx1.parquet')
+    __fx1 = pl.scan_parquet('raw_data_dfs/__fx1.parquet')
     __fx1 = (pl.concat([aux, __fx1], how = 'vertical_relaxed')
                .sort(['curcdd', 'datadate'])
                .with_columns(aux = col('datadate').shift(-1).over('curcdd'))
@@ -617,9 +619,9 @@ def gen_comp_dsf():
     con = ibis.duckdb.connect('aux_comp_dsf.ddb', threads = os.cpu_count())
 
     compustat_fx().write_parquet('fx_data.parquet')
-    con.create_table('comp_g_secd'   , con.read_parquet('Raw_tables/comp_g_secd.parquet'))
+    con.create_table('comp_g_secd'   , con.read_parquet('raw_tables/comp_g_secd.parquet'))
     con.create_table('__firm_shares2', con.read_parquet('__firm_shares2.parquet')        )
-    con.create_table('comp_secd'     , con.read_parquet('Raw_tables/comp_secd.parquet')  )
+    con.create_table('comp_secd'     , con.read_parquet('raw_tables/comp_secd.parquet')  )
     con.create_table('fx'            , con.read_parquet('fx_data.parquet')               )
 
     con.raw_sql("""
@@ -767,7 +769,7 @@ def gen_secm_data():
     con = ibis.duckdb.connect('aux_comp_secm.ddb', threads = os.cpu_count())
 
     compustat_fx().rename({'datadate': 'date'}).write_parquet('fx_data.parquet')
-    con.create_table('comp_secm'     , con.read_parquet('Raw_tables/comp_secm.parquet'), overwrite = True)
+    con.create_table('comp_secm'     , con.read_parquet('raw_tables/comp_secm.parquet'), overwrite = True)
     con.create_table('__firm_shares2', con.read_parquet('__firm_shares2.parquet')      , overwrite = True)
     con.create_table('fx'            , con.read_parquet('fx_data.parquet')             , overwrite = True)
 
@@ -892,8 +894,8 @@ def comp_exchanges():
                  .then(pl.lit(1))\
                  .otherwise(pl.lit(0))\
                  .alias('exch_main')
-    comp_r_ex_codes = pl.read_parquet('Raw_data_dfs/comp_r_ex_codes.parquet')
-    __ex_country = pl.read_parquet('Raw_data_dfs/__ex_country1.parquet')
+    comp_r_ex_codes = pl.read_parquet('raw_data_dfs/comp_r_ex_codes.parquet')
+    __ex_country = pl.read_parquet('raw_data_dfs/__ex_country1.parquet')
     __ex_country = (pl.SQLContext(frame = __ex_country)
                       .execute(SQL_query)
                       .collect()
@@ -929,19 +931,19 @@ def add_primary_sec(data_path, datevar, file_name):
             ORDER BY gvkey, iid, datadate
         ),
         prihistrow AS (
-            SELECT * FROM read_parquet('Raw_data_dfs/__prihistrow.parquet')
+            SELECT * FROM read_parquet('raw_data_dfs/__prihistrow.parquet')
             ORDER BY gvkey, effdate
         ),
         prihistusa AS (
-            SELECT * FROM read_parquet('Raw_data_dfs/__prihistusa.parquet')
+            SELECT * FROM read_parquet('raw_data_dfs/__prihistusa.parquet')
             ORDER BY gvkey, effdate
         ),
         prihistcan AS (
-            SELECT * FROM read_parquet('Raw_data_dfs/__prihistcan.parquet')
+            SELECT * FROM read_parquet('raw_data_dfs/__prihistcan.parquet')
             ORDER BY gvkey, effdate
         ),
         header AS (
-            SELECT * FROM read_parquet('Raw_data_dfs/__header.parquet')
+            SELECT * FROM read_parquet('raw_data_dfs/__header.parquet')
             ORDER BY gvkey
         ),
         __data1 AS (
@@ -997,10 +999,10 @@ def load_rf_and_exchange_data():
     Output:
         Tuple of (crsp_mcti LazyFrame, ff_factors_monthly LazyFrame, exchanges DataFrame).
     """
-    crsp_mcti = (pl.read_parquet('Raw_data_dfs/crsp_mcti_t30ret.parquet')
+    crsp_mcti = (pl.read_parquet('raw_data_dfs/crsp_mcti_t30ret.parquet')
                    .with_columns(merge_aux = gen_MMYY_column('caldt'))
                    .drop('caldt'))
-    ff_factors_monthly = (pl.read_parquet('Raw_data_dfs/ff_factors_monthly.parquet')
+    ff_factors_monthly = (pl.read_parquet('raw_data_dfs/ff_factors_monthly.parquet')
                             .with_columns(merge_aux = gen_MMYY_column('date'))
                             .drop('date'))
     __exchanges = comp_exchanges()
@@ -1050,7 +1052,7 @@ def gen_delist_df(__returns):
     Output:
         DataFrame {gvkey,iid,date_delist,dlret} for use in delisting adjustments.
     """
-    __sec_info = pl.scan_parquet('Raw_data_dfs/__sec_info.parquet')
+    __sec_info = pl.scan_parquet('raw_data_dfs/__sec_info.parquet')
     __delist = (__returns.lazy()
                          .filter((col('ret_local').is_not_null()) & (col('ret_local') != 0.))
                          .select(['gvkey', 'iid', 'datadate'])
@@ -1183,7 +1185,7 @@ def prepare_crsp_sf(freq):
         Parquet crsp_msf.parquet or crsp_dsf.parquet with returns and ret_exc.
     """
     merge_vars = ['permno', 'merge_aux'] if (freq == 'm') else ['permno', 'date']
-    __crsp_sf = (pl.scan_parquet(f'Raw_data_dfs/__crsp_sf_{freq}.parquet')
+    __crsp_sf = (pl.scan_parquet(f'raw_data_dfs/__crsp_sf_{freq}.parquet')
                    .with_columns([col(var).cast(pl.Float64) for var in ['prc', 'ret', 'retx', 'prc_high', 'prc_low']] +\
                                  [col('vol').cast(pl.Int64)])
                    .with_columns(adj_trd_vol_NASDAQ('date', 'vol', 'exchcd', 3))
@@ -1200,9 +1202,9 @@ def prepare_crsp_sf(freq):
     c6 = col('dlret').is_not_null()
     c7 = (c5 & c6)
     crsp_sedelist_aux_col = [gen_MMYY_column('dlstdt').alias('merge_aux')] if (freq == 'm') else [col('dlstdt').alias('date')]
-    crsp_sedelist = pl.scan_parquet(f'Raw_data_dfs/crsp_{freq}sedelist.parquet').with_columns(crsp_sedelist_aux_col)
-    crsp_mcti = add_MMYY_column_drop_original(pl.scan_parquet('Raw_data_dfs/crsp_mcti_t30ret.parquet'), 'caldt')
-    ff_factors_monthly = add_MMYY_column_drop_original(pl.scan_parquet('Raw_data_dfs/ff_factors_monthly.parquet'), 'date')
+    crsp_sedelist = pl.scan_parquet(f'raw_data_dfs/crsp_{freq}sedelist.parquet').with_columns(crsp_sedelist_aux_col)
+    crsp_mcti = add_MMYY_column_drop_original(pl.scan_parquet('raw_data_dfs/crsp_mcti_t30ret.parquet'), 'caldt')
+    ff_factors_monthly = add_MMYY_column_drop_original(pl.scan_parquet('raw_data_dfs/ff_factors_monthly.parquet'), 'date')
 
     me_company_exp = (pl.when(pl.count('me').over(['permco', 'date']) != 0)
                         .then(pl.coalesce(['me',0.]).sum().over(['permco', 'date']))
@@ -1417,7 +1419,7 @@ def crsp_industry():
     Output:
         Parquet crsp_ind.parquet with {permno,permco,date,sic,naics}.
     """
-    permno0 = pl.scan_parquet('Raw_data_dfs/permno0.parquet')
+    permno0 = pl.scan_parquet('raw_data_dfs/permno0.parquet')
     permno0 = (permno0.with_columns(sic = pl.when(col('sic') == 0).then(pl.lit(None).cast(pl.Int64)).otherwise(col('sic')))
                       .with_columns(date = pl.date_ranges('namedt', 'nameendt'))
                       .explode('date')
@@ -1442,7 +1444,7 @@ def comp_hgics(lib):
     Output:
         Parquet with {gvkey,date,gics} expanded to daily frequency.
     """
-    paths = {'raw data': {'national': 'Raw_data_dfs/comp_hgics_na.parquet', 'global': 'Raw_data_dfs/comp_hgics_gl.parquet'},
+    paths = {'raw data': {'national': 'raw_data_dfs/comp_hgics_na.parquet', 'global': 'raw_data_dfs/comp_hgics_gl.parquet'},
              'output' : {'national': 'na_hgics.parquet', 'global': 'g_hgics.parquet'}}
     data = pl.read_parquet(paths['raw data'][lib])#.sort(['gvkey', 'indfrom'])
     data = data.with_columns(gics = pl.when(col('gics').is_null()).then(-999).otherwise(col('gics')),
@@ -1500,8 +1502,8 @@ def comp_sic_naics():
         Parquet comp_other.parquet with daily SIC/NAICS per gvkey.
     """
     con = ibis.duckdb.connect(threads = os.cpu_count())
-    con.create_table('sic_naics_na', con.read_parquet('Raw_data_dfs/sic_naics_na.parquet'))
-    con.create_table('sic_naics_gl', con.read_parquet('Raw_data_dfs/sic_naics_gl.parquet'))
+    con.create_table('sic_naics_na', con.read_parquet('raw_data_dfs/sic_naics_na.parquet'))
+    con.create_table('sic_naics_gl', con.read_parquet('raw_data_dfs/sic_naics_gl.parquet'))
     con.raw_sql("""
                 CREATE TABLE comp2 AS
                 SELECT *
@@ -2186,8 +2188,8 @@ def standardized_accounting_data(coverage, convert_to_usd, me_data_path, include
     Output:
         Two Parquet files: 'acc_std_ann.parquet' (annual) and 'acc_std_qtr.parquet' (quarterly) standardized accounting data.
     """
-    g_fundq_cols = pl.scan_parquet('Raw_tables/comp_g_fundq.parquet').collect_schema().names()
-    fundq_cols   = pl.scan_parquet('Raw_tables/comp_fundq.parquet'  ).collect_schema().names()
+    g_fundq_cols = pl.scan_parquet('raw_tables/comp_g_fundq.parquet').collect_schema().names()
+    fundq_cols   = pl.scan_parquet('raw_tables/comp_fundq.parquet'  ).collect_schema().names()
     #Compustat Accounting Vars to Extract
     avars_inc = ['sale', 'revt', 'gp', 'ebitda', 'oibdp', 'ebit', 'oiadp', 'pi', 'ib', 'ni', 'mii','cogs', 'xsga', 'xopr', 'xrd', 'xad', 'xlr', 'dp', 'xi', 'do', 'xido', 'xint', 'spi', 'nopi', 'txt','dvt']
     avars_cf  = ['oancf', 'ibc', 'dpc', 'xidoc', 'capx', 'wcapt', # Operating
@@ -2207,7 +2209,7 @@ def standardized_accounting_data(coverage, convert_to_usd, me_data_path, include
         #Annual global data:
         vars_not_in_query = ['gp', 'pstkrv', 'pstkl', 'itcb', 'xad', 'txbcof', 'ni']
         query_vars = [var for var in (avars + avars_other) if var not in vars_not_in_query]
-        g_funda = load_raw_fund_table_and_filter('Raw_tables/comp_g_funda.parquet', start_date, 'GLOBAL', 1)
+        g_funda = load_raw_fund_table_and_filter('raw_tables/comp_g_funda.parquet', start_date, 'GLOBAL', 1)
         __gfunda = (g_funda.with_columns(ni = (col('ib') + pl.coalesce('xi', 0) + pl.coalesce('do', 0)).cast(pl.Float64))
                            .select(['gvkey', 'datadate', 'n', 'indfmt', 'curcd', 'source', 'ni'] +\
                                    [fl_none().alias(i) for i in ['gp', 'pstkrv', 'pstkl', 'itcb', 'xad', 'txbcof']] +\
@@ -2216,7 +2218,7 @@ def standardized_accounting_data(coverage, convert_to_usd, me_data_path, include
         #Quarterly global data:
         vars_not_in_query = ['icaptq','niy','txditcq','txpq','xidoq','xidoy','xrdq','xrdy','txbcofy', 'niq', 'ppegtq', 'doq', 'doy']
         query_vars = [var for var in qvars if var not in vars_not_in_query]
-        g_fundq = load_raw_fund_table_and_filter('Raw_tables/comp_g_fundq.parquet', start_date, 'GLOBAL', 1)
+        g_fundq = load_raw_fund_table_and_filter('raw_tables/comp_g_fundq.parquet', start_date, 'GLOBAL', 1)
         __gfundq = (g_fundq.with_columns(niq    = (col('ibq') + pl.coalesce('xiq', 0.)).cast(pl.Float64),
                                          ppegtq = (col('ppentq') + col('dpactq')).cast(pl.Float64))
                            .select(['gvkey', 'datadate', 'n', 'indfmt', 'fyr', 'fyearq', 'fqtr', 'curcdq', 'source', 'niq', 'ppegtq'] +\
@@ -2227,14 +2229,14 @@ def standardized_accounting_data(coverage, convert_to_usd, me_data_path, include
         #Annual north american data:
         vars_not_in_query = ['wcapt', 'ltdch', 'purtshr']
         query_vars = [var for var in (avars + avars_other) if var not in vars_not_in_query]
-        funda = load_raw_fund_table_and_filter('Raw_tables/comp_funda.parquet', start_date, 'NA', 2)
+        funda = load_raw_fund_table_and_filter('raw_tables/comp_funda.parquet', start_date, 'NA', 2)
         __funda = funda.select(['gvkey', 'datadate', 'n', 'curcd', 'source'] +\
                                [fl_none().alias(i) for i in ['wcapt', 'ltdch', 'purtshr']] +\
                                query_vars)
         #Quarterly north american data:
         vars_not_in_query = ['dvtq','gpq','dvty','gpy','ltdchy','purtshry','wcapty']
         query_vars = [var for var in qvars if var not in vars_not_in_query]
-        fundq = load_raw_fund_table_and_filter('Raw_tables/comp_fundq.parquet', start_date, 'NA', 2)
+        fundq = load_raw_fund_table_and_filter('raw_tables/comp_fundq.parquet', start_date, 'NA', 2)
         __fundq = fundq.select(['gvkey', 'datadate', 'n', 'fyr', 'fyearq', 'fqtr', 'curcdq', 'source'] +\
                                [fl_none().alias(i) for i in ['dvtq','gpq','dvty','gpy','ltdchy','purtshry','wcapty']] +\
                                query_vars)
@@ -3935,21 +3937,21 @@ def firm_age(data_path):
     """
     con = ibis.duckdb.connect(threads = os.cpu_count())
     data = con.read_parquet(data_path).select(['gvkey', 'permco', 'id', 'eom'])
-    comp_secm  = con.read_parquet('Raw_tables/comp_secm.parquet'  ).select(['gvkey', 'datadate'])
-    comp_gsecm = con.read_parquet('Raw_tables/comp_g_secd.parquet').filter(_.monthend == 1).select(['gvkey', 'datadate'])
+    comp_secm  = con.read_parquet('raw_tables/comp_secm.parquet'  ).select(['gvkey', 'datadate'])
+    comp_gsecm = con.read_parquet('raw_tables/comp_g_secd.parquet').filter(_.monthend == 1).select(['gvkey', 'datadate'])
     comp_ret_age = (comp_secm.union(comp_gsecm)
                               .group_by('gvkey')
                               .agg(comp_ret_first = _.datadate.min())
                               .mutate(comp_ret_first = ((_.comp_ret_first - ibis.interval(years=1)).year().cast('string') + "-12-31").cast('date') )
                    )
-    comp_funda  = con.read_parquet('Raw_tables/comp_funda.parquet'  ).select(['gvkey', 'datadate'])
-    comp_gfunda = con.read_parquet('Raw_tables/comp_g_funda.parquet').select(['gvkey', 'datadate'])
+    comp_funda  = con.read_parquet('raw_tables/comp_funda.parquet'  ).select(['gvkey', 'datadate'])
+    comp_gfunda = con.read_parquet('raw_tables/comp_g_funda.parquet').select(['gvkey', 'datadate'])
     comp_acc_age = (comp_funda.union(comp_gfunda)
                               .group_by('gvkey')
                               .agg(comp_acc_first = _.datadate.min())
                               .mutate(comp_acc_first = ((_.comp_acc_first - ibis.interval(years=1)).year().cast('string') + "-12-31").cast('date') )
                    )
-    crsp_age = (con.read_parquet('Raw_tables/crsp_msf.parquet')
+    crsp_age = (con.read_parquet('raw_tables/crsp_msf.parquet')
                    .group_by('permco')
                    .agg(crsp_first = _.date.min())
                  )
@@ -4803,7 +4805,7 @@ def save_main_data(end_date):
         3) Save filtered dataset and split into country parquet files.
 
     Output:
-        'world_data_filtered.parquet' and 'Characteristics/{country}.parquet'.
+        'world_data_filtered.parquet' and 'characteristics/{country}.parquet'.
     """
     months_exp = (col('eom').dt.year() * 12 + col('eom').dt.month()).cast(pl.Int64)
     data = (pl.scan_parquet('world_data.parquet')
@@ -4816,7 +4818,7 @@ def save_main_data(end_date):
               .filter((col('primary_sec') == 1) & (col('common') == 1) & (col('obs_main') == 1) & (col('exch_main') == 1) & (col('eom') <= end_date)))
     data.select(pl.all().shrink_dtype()).collect(streaming=True).write_parquet('world_data_filtered.parquet')
 
-    OUT_DIR = "Characteristics"
+    OUT_DIR = "characteristics"
     con = duckdb.connect()
     con.execute(f"""
     COPY (SELECT * FROM read_parquet('world_data_filtered.parquet'))
@@ -4850,11 +4852,13 @@ def save_output_files():
     Output:
         Files relocated into 'Output/' directory.
     """
-    os.system('mv market_returns.parquet Output/')
-    os.system('mv market_returns_daily.parquet Output/')
-    os.system('mv nyse_cutoffs.parquet Output/')
-    os.system('mv return_cutoffs.parquet Output/')
-    os.system('mv return_cutoffs_daily.parquet Output/')
+    os.system('mv market_returns.parquet other_output/')
+    os.system('mv market_returns_daily.parquet other_output/')
+    os.system('mv nyse_cutoffs.parquet other_output/')
+    os.system('mv return_cutoffs.parquet other_output/')
+    os.system('mv return_cutoffs_daily.parquet other_output/')
+    os.system('mv ap_factors_monthly.parquet other_output/')
+    os.system('mv ap_factors_daily.parquet other_output/')
 
 @measure_time
 def save_daily_ret():
@@ -4868,7 +4872,7 @@ def save_daily_ret():
         3) For each country, filter and save parquet file (compressed).
 
     Output:
-        'Daily_Returns/{country}.parquet' files for all countries.
+        'return_data/daily_rets_by_country/{country}.parquet' files for all countries.
     """
     data = (pl.scan_parquet('world_dsf.parquet')
               .select(['excntry', 'id', 'date', 'me', 'ret', 'ret_exc'])
@@ -4876,7 +4880,7 @@ def save_daily_ret():
               )
     data.collect(engine = 'streaming').write_parquet('daily_returns_temp.parquet')
 
-    OUT_DIR = "Daily_Returns"
+    OUT_DIR = "return_data/daily_rets_by_country"
     con = duckdb.connect()
     con.execute(f"""
     COPY (SELECT * FROM read_parquet('daily_returns_temp.parquet'))
@@ -4906,13 +4910,13 @@ def save_accounting_data():
     Steps:
         1) Load acc_std_qtr and acc_std_ann parquet files.
         2) Filter rows with non-null source.
-        3) Write results to Accounting_Data folder.
+        3) Write results to accounting_data folder.
 
     Output:
-        'Accounting_Data/Quarterly.parquet' and 'Accounting_Data/Annual.parquet'.
+        'accounting_data/Quarterly.parquet' and 'accounting_data/Annual.parquet'.
     """
-    pl.scan_parquet('acc_std_qtr.parquet').filter(col('source').is_not_null()).collect().write_parquet('Accounting_Data/Quarterly.parquet')
-    pl.scan_parquet('acc_std_ann.parquet').filter(col('source').is_not_null()).collect().write_parquet('Accounting_Data/Annual.parquet')
+    pl.scan_parquet('acc_std_qtr.parquet').filter(col('source').is_not_null()).collect().write_parquet('accounting_data/quarterly.parquet')
+    pl.scan_parquet('acc_std_ann.parquet').filter(col('source').is_not_null()).collect().write_parquet('accounting_data/annual.parquet')
 
 @measure_time
 def save_full_files_and_cleanup():
@@ -4922,18 +4926,18 @@ def save_full_files_and_cleanup():
 
     Steps:
         1) Write compressed versions of world_dsf, world_data, and filtered world_data.
-        2) Remove raw parquet files and Raw_tables/Raw_data_dfs folders.
+        2) Remove raw parquet files and raw_tables/raw_data_dfs folders.
 
     Output:
-        Compressed parquet files in Daily_Returns/ and World_Data/, cleanup of temp files.
+        Compressed parquet files in return_data/ and characteristics/, cleanup of temp files.
     """
-    pl.scan_parquet('world_dsf.parquet').select(pl.all().shrink_dtype()).collect(streaming = True).write_parquet(f'Daily_Returns/world_dsf.parquet', compression='zstd', compression_level = 11, statistics = False)
-    pl.scan_parquet('world_data.parquet').select(pl.all().shrink_dtype()).collect(streaming = True).write_parquet(f'World_Data/world_data.parquet', compression='zstd', compression_level = 11, statistics = False)
-    pl.scan_parquet('world_data_filtered.parquet').select(pl.all().shrink_dtype()).collect(streaming = True).write_parquet(f'World_Data/world_data_filtered.parquet', compression='zstd', compression_level = 11, statistics = False)
+    pl.scan_parquet('world_dsf.parquet').select(pl.all().shrink_dtype()).collect(streaming = True).write_parquet(f'return_data/world_dsf.parquet', compression='zstd', compression_level = 11, statistics = False)
+    pl.scan_parquet('world_data.parquet').select(pl.all().shrink_dtype()).collect(streaming = True).write_parquet(f'characteristics/world_data_unfiltered.parquet', compression='zstd', compression_level = 11, statistics = False)
+    pl.scan_parquet('world_data_filtered.parquet').select(pl.all().shrink_dtype()).collect(streaming = True).write_parquet(f'characteristics/world_data_filtered.parquet', compression='zstd', compression_level = 11, statistics = False)
     os.system('rm *.parquet')
     os.system('rm *.ddb')
-    os.system('rm -rf Raw_tables')
-    os.system('rm -rf Raw_data_dfs')
+    os.system('rm -rf raw_tables')
+    os.system('rm -rf raw_data_dfs')
 
 @measure_time
 def save_monthly_ret():
@@ -4944,13 +4948,13 @@ def save_monthly_ret():
     Steps:
         1) Load world_msf.parquet and select relevant columns.
         2) Shrink dtypes and collect results.
-        3) Write to World_Ret_Monthly/world_ret_monthly.parquet.
+        3) Write to return_data/world_ret_monthly.parquet.
 
     Output:
         Parquet file with monthly returns by country/security.
     """
     data = pl.scan_parquet('world_msf.parquet').select(['excntry', 'id', 'source_crsp', 'eom', 'me', 'ret_exc', 'ret', 'ret_local'])
-    data.select(pl.all().shrink_dtype()).collect().write_parquet(f'World_Ret_Monthly/world_ret_monthly.parquet', compression='zstd', compression_level = 11, statistics = False)
+    data.select(pl.all().shrink_dtype()).collect().write_parquet(f'return_data/world_ret_monthly.parquet', compression='zstd', compression_level = 11, statistics = False)
 
 @measure_time
 def merge_roll_apply_daily_results():
