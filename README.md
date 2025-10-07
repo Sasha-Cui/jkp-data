@@ -6,7 +6,6 @@ This document provides instructions for creating a dataset based on the paper "I
 
 ### Prerequisites
 
-- Ensure you have Python installed on your system.
 - Obtain your WRDS credentials.
 - Ensure you have conda or miniconda installed on your system.
 
