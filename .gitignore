@@ -71,3 +71,4 @@ desktop.ini
 .local/
 config/python_keyring/
 .local/share/python_keyring/
+.DS_Store
