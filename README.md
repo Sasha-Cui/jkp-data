@@ -73,7 +73,7 @@ This document provides instructions for creating a dataset based on the paper *â
 
 At the end of the routine, you will find the output in:
 ```
-SAS-Python-Migrate/build_database/data/processed
+SAS-Python-Migrate/build_database/data/processed/
 ```
 
 ### Notes
