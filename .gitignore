@@ -1,0 +1,62 @@
+# ==========================================
+# Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.egg-info/
+*.log
+*.tmp
+*.bak
+
+# Virtual environments
+.venv/
+venv/
+env/
+.conda/
+
+# ==========================================
+# Jupyter / VSCode
+# ==========================================
+.ipynb_checkpoints/
+.vscode/
+*.code-workspace
+
+# ==========================================
+# Data and Outputs
+# ==========================================
+*.parquet
+*.csv
+*.xlsx
+*.xls
+*.gz
+*.zip
+*.rar
+*.h5
+*.db
+*.sqlite
+outputs/
+output/
+data/
+build_database/data/
+
+# Keep this one intentionally
+!build_database/data/.gitkeep
+
+# ==========================================
+# OS-specific junk
+# ==========================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==========================================
+# HPC or system-specific
+# ==========================================
+*.slurm.out
+*.slurm.err
+*.out
+*.err
+*.txt~
+*~
