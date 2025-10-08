@@ -1,7 +1,9 @@
 from aux_functions import *
+from jkp_credentials import get_jkp_factors_credentials
 end_date = pl.datetime(2023, 12, 31)
+creds = get_jkp_factors_credentials()
 setup_folder_structure()
-download_raw_data_tables(username = "", password = "")
+download_raw_data_tables(username = creds.username, password = creds.password)
 gen_raw_data_dfs()
 prepare_comp_sf('both')
 prepare_crsp_sf('m')

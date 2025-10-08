@@ -60,3 +60,14 @@ desktop.ini
 *.err
 *.txt~
 *~
+
+# macOS clutter
+.DS_Store
+
+# Local creds helpers
+.jkp_factors_user
+
+# Keyring files (plaintext/alt backends)
+.local/
+config/python_keyring/
+.local/share/python_keyring/
