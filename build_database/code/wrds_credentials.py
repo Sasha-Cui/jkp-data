@@ -1,4 +1,5 @@
 import os
+
 os.environ["PYTHON_KEYRING_BACKEND"] = "keyrings.alt.file.PlaintextKeyring"
 import keyring
 import getpass
@@ -6,17 +7,19 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
-SERVICE_NAME = "jkp_factors"
-LAST_USER_FILE = Path.home() / ".jkp_factors_user"  # remembers last username
+SERVICE_NAME = "WRDS"
+LAST_USER_FILE = Path.home() / ".wrds_user"  # remembers last username
+
 
 @dataclass(frozen=True)
 class Credentials:
     username: str
     password: str
 
-def get_jkp_factors_credentials() -> Credentials:
+
+def get_wrds_credentials() -> Credentials:
     """
-    Automatically retrieves credentials for jkp_factors.
+    Automatically retrieves credentials for wrds.
     - On first run: asks for username and password/token, stores them.
     - On later runs: loads both silently from the system keyring.
     """
@@ -24,7 +27,7 @@ def get_jkp_factors_credentials() -> Credentials:
     if LAST_USER_FILE.exists():
         username = LAST_USER_FILE.read_text().strip()
     else:
-        username = input("Username for jkp_factors: ").strip()
+        username = input(f"Username for {SERVICE_NAME}: ").strip()
         LAST_USER_FILE.write_text(username)
 
     # Try to retrieve the stored password for this username
@@ -32,7 +35,7 @@ def get_jkp_factors_credentials() -> Credentials:
 
     # If not found, prompt once and store it securely
     if not password:
-        password = getpass.getpass(f"Password or token for {username}: ")
+        password = getpass.getpass(f"Password or token for {username} at {SERVICE_NAME}: ")
         keyring.set_password(SERVICE_NAME, username, password)
         print(f"Stored credentials for '{username}' in keyring under '{SERVICE_NAME}'")
 
@@ -51,7 +54,9 @@ def reset_credentials(full_reset: bool = False):
         if full_reset:
             try:
                 keyring.delete_password(SERVICE_NAME, username)
-                print(f"Deleted password for '{username}' from keyring under '{SERVICE_NAME}'")
+                print(
+                    f"Deleted password for '{username}' from keyring under '{SERVICE_NAME}'"
+                )
             except keyring.errors.PasswordDeleteError:
                 print(f"No keyring entry found for '{username}'")
 
@@ -60,16 +65,16 @@ def reset_credentials(full_reset: bool = False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Manage stored jkp_factors credentials.")
+    parser = argparse.ArgumentParser(description="Manage stored wrds credentials.")
     parser.add_argument(
         "--reset",
         action="store_true",
-        help="Remove both stored username and password from keyring."
+        help="Remove both stored username and password from keyring.",
     )
     args = parser.parse_args()
 
     if args.reset:
         reset_credentials(full_reset=args.reset)
     else:
-        creds = get_jkp_factors_credentials()
+        creds = get_wrds_credentials()
         print(f"Using credentials for '{creds.username}'")
