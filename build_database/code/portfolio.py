@@ -196,50 +196,15 @@ settings = {
     "ind_pf": True,
 }
 
+def apply_ecdf_statsmodels(group_df: pl.DataFrame) -> pl.DataFrame:
+    # Fit ECDF on the subset bp_stock == True
+    base = group_df.filter(pl.col("bp_stock")).select("var").to_numpy().ravel()
+    # base = base[~np.isnan(base)]
+    F = ECDF(base, side="right")  # matches R's ecdf (right-continuous)
+    vals = group_df.select("var").to_numpy().ravel()
+    cdf_vals = F(vals)
 
-def ecdf_r_like(x):
-    """
-    Emulates R's ecdf function behavior, returning a function
-    that calculates the ECDF values for any given set of points based on the input data x.
-    """
-    # Sort the input data and calculate the ECDF values
-    x_sorted = np.sort(x)
-    n = len(x_sorted)
-
-    # Handle edge case for empty input
-    if n == 0:
-        raise ValueError("'x' must have 1 or more non-missing values")
-
-    # Calculate the unique values and their positions
-    unique_vals, indices, counts = np.unique(
-        x_sorted, return_index=True, return_counts=True
-    )
-    cum_counts = np.cumsum(counts) / n
-
-    # Define the ECDF function
-    def ecdf_func(query_points):
-        # Ensure query_points is a numpy array
-        query_points = np.asarray(query_points)
-        # Search for indices where to insert query points in the sorted unique values
-        insert_positions = np.searchsorted(unique_vals, query_points, side="right")
-        # Use indices to find cumulative probabilities, handling values beyond the max
-        ecdf_values = np.where(
-            insert_positions > 0, cum_counts[insert_positions - 1], 0.0
-        )
-        return ecdf_values
-
-    return ecdf_func
-
-
-def apply_ecdf(group_df):
-    grouped = group_df.filter(pl.col("bp_stock") == True)
-    age_array_calculate = grouped["var"].to_numpy()
-    ecdf_func = ecdf_r_like(age_array_calculate)
-    age_array_apply = group_df["var"].to_numpy()
-    age_ecdf = ecdf_func(age_array_apply)
-    # Add the ECDF values as a new column to the group DataFrame
-    return group_df.with_columns(pl.Series("cdf", age_ecdf))
-
+    return group_df.with_columns(pl.Series("cdf", cdf_vals))
 
 # main portfolios function to create the portfolios
 def portfolios(
@@ -457,9 +422,6 @@ def portfolios(
 
     # creating portfolios for all the characteristics
     char_pfs = []
-    # for x in chars:
-    #     op = {}
-    #     print(f"   {x}: {chars.index(x) + 1} out of {len(chars)}")
     for i, x in enumerate(tqdm(chars, desc="Processing chars", unit="char", ncols=80)):
         op = {}
 
@@ -504,7 +466,7 @@ def portfolios(
 
         # Ensure that 'sub' is not empty
         if sub.height > 0:
-            sub = sub.group_by("eom").map_groups(apply_ecdf)
+            sub = sub.group_by("eom").map_groups(apply_ecdf_statsmodels)
 
             # Step 1: Find the minimum CDF value within each 'eom' group
             sub = sub.with_columns(pl.col("cdf").min().over("eom").alias("min_cdf"))
@@ -517,16 +479,10 @@ def portfolios(
                 .alias("cdf")
             )
 
-            # Step 3: Calculate portfolio assignments
-            sub = sub.with_columns((pl.col("cdf") * pfs).ceil().alias("pf"))
+            # Step 3: Calculate portfolio assignments and adjust portfolio numbers (Happens when non-bp stocks extend beyond the bp stock range)
+            sub = sub.with_columns((pl.col("cdf") * pfs).ceil().clip(lower_bound=1, upper_bound=pfs).alias("pf"))
 
-            # Step 4: Adjust portfolio numbers
-            # Happens when non-bp stocks extend beyond the bp stock range
-            sub = sub.with_columns(
-                pl.when(pl.col("pf") == 0).then(1).otherwise(pl.col("pf")).alias("pf")
-            )
-
-            pf_returns = sub.group_by(["pf", "eom"]).agg(
+            pf_returns = sub.lazy().group_by(["pf", "eom"]).agg(
                 [
                     pl.lit(x).alias("characteristic"),
                     pl.len().alias("n"),
@@ -545,7 +501,7 @@ def portfolios(
             pf_returns = pf_returns.with_columns(
                 pl.col("eom").dt.offset_by("1mo").dt.month_end().alias("eom")
             )
-            op["pf_returns"] = pf_returns
+            op["pf_returns"] = pf_returns.collect()
 
             if signals:
                 if signals_w == "ew":
