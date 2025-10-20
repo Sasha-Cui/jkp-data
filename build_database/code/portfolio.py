@@ -5,6 +5,7 @@ import numpy as np
 import time
 from tqdm import tqdm
 import warnings
+
 warnings.filterwarnings(
     "ignore",
     category=UserWarning,
@@ -18,7 +19,7 @@ output_path = "build_database/data/processed/portfolios"
 countries = []
 # Iterate through all files in the folder
 for file in os.listdir(os.path.join(data_path, "characteristics")):
-    if file.endswith(".parquet") and 'world' not in file:
+    if file.endswith(".parquet") and "world" not in file:
         countries.append(file.replace(".parquet", ""))
 
 
@@ -200,33 +201,32 @@ settings = {
     "daily_pf": True,
     "ind_pf": True,
 }
+
+
 def add_ecdf(df: pl.DataFrame, group_cols: list[str] = ["eom"]) -> pl.DataFrame:
     # 1) counts of reference sample per distinct var within each group
     ref_counts = (
-        df.filter(pl.col("bp_stock"))
-          .group_by(group_cols + ["var"])
-          .agg(n_ref = pl.len())
+        df.filter(pl.col("bp_stock")).group_by(group_cols + ["var"]).agg(n_ref=pl.len())
     )
 
     # 2) ECDF steps: cumulative share within each group
     ref_steps = (
-        ref_counts
-        .sort(group_cols + ["var"])
+        ref_counts.sort(group_cols + ["var"])
         .with_columns(
             # apply the window to the whole fraction to ensure same partition
-            cdf_val = (pl.cum_sum("n_ref") / pl.sum("n_ref")).over(group_cols)
+            cdf_val=(pl.cum_sum("n_ref") / pl.sum("n_ref")).over(group_cols)
         )
         .select(group_cols + ["var", "cdf_val"])
     )
 
     # 3) MUST pre-sort both sides by group_cols + ["var"] for join_asof with 'by'
-    left  = df.sort(group_cols + ["var"])
+    left = df.sort(group_cols + ["var"])
     right = ref_steps.sort(group_cols + ["var"])  # already sorted above
 
     out = (
         left.join_asof(
             right,
-            on = "var",
+            on="var",
             by=group_cols,
             strategy="backward",
         )
@@ -313,7 +313,9 @@ def portfolios(
 
     # Daily Returns
     if daily_pf:
-        daily_file_path = f"{data_path}/return_data/daily_rets_by_country/{excntry}.parquet"
+        daily_file_path = (
+            f"{data_path}/return_data/daily_rets_by_country/{excntry}.parquet"
+        )
         daily = pl.read_parquet(daily_file_path, columns=["id", "date", "ret_exc"])
         # daily = daily.with_columns(pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("date"))
         daily = daily.with_columns(
@@ -377,15 +379,26 @@ def portfolios(
 
     # standardizing signals
     if signals_standardize and signals:
-        data = (data
-                # Ranking within groups defined by 'eom'
-                .with_columns(
-                [(pl.col(char).rank(method="min").over("eom").cast(pl.Int64)).alias(char) for char in chars]
-                )
-                # normalizing ranks
-                .with_columns(
-                [(((pl.col(char) / pl.col(char).max()) - pl.lit(0.5)).over("eom")).alias(char) for char in chars]
-                )
+        data = (
+            data
+            # Ranking within groups defined by 'eom'
+            .with_columns(
+                [
+                    (pl.col(char).rank(method="min").over("eom").cast(pl.Int64)).alias(
+                        char
+                    )
+                    for char in chars
+                ]
+            )
+            # normalizing ranks
+            .with_columns(
+                [
+                    (
+                        ((pl.col(char) / pl.col(char).max()) - pl.lit(0.5)).over("eom")
+                    ).alias(char)
+                    for char in chars
+                ]
+            )
         )
 
     if ind_pf:
@@ -458,18 +471,22 @@ def portfolios(
         data = data.with_columns(pl.col(x).cast(pl.Float64).alias("var"))
         if not signals:
             # Select rows where 'var' is not missing and only specific columns
-            sub = data.lazy().filter(pl.col("var").is_not_null()).select(
-                [
-                    "id",
-                    "eom",
-                    "var",
-                    "size_grp",
-                    "ret_exc_lead1m",
-                    "me",
-                    "me_cap",
-                    "crsp_exchcd",
-                    "comp_exchg",
-                ]
+            sub = (
+                data.lazy()
+                .filter(pl.col("var").is_not_null())
+                .select(
+                    [
+                        "id",
+                        "eom",
+                        "var",
+                        "size_grp",
+                        "ret_exc_lead1m",
+                        "me",
+                        "me_cap",
+                        "crsp_exchcd",
+                        "comp_exchg",
+                    ]
+                )
             )
         else:
             # Select rows where 'var' is not missing, retaining all columns
@@ -490,8 +507,8 @@ def portfolios(
                 pl.col("size_grp").is_in(["mega", "large", "small"]).alias("bp_stock")
             )
 
-        sub = (sub.with_columns(bp_n = pl.sum("bp_stock").over("eom"))
-                  .filter(pl.col("bp_n") >= bp_min_n)
+        sub = sub.with_columns(bp_n=pl.sum("bp_stock").over("eom")).filter(
+            pl.col("bp_n") >= bp_min_n
         )
 
         # Ensure that 'sub' is not empty
@@ -510,7 +527,12 @@ def portfolios(
             )
 
             # Step 3: Calculate portfolio assignments and adjust portfolio numbers (Happens when non-bp stocks extend beyond the bp stock range)
-            sub = sub.with_columns((pl.col("cdf") * pfs).ceil().clip(lower_bound=1, upper_bound=pfs).alias("pf"))
+            sub = sub.with_columns(
+                (pl.col("cdf") * pfs)
+                .ceil()
+                .clip(lower_bound=1, upper_bound=pfs)
+                .alias("pf")
+            )
 
             pf_returns = sub.group_by(["pf", "eom"]).agg(
                 [
@@ -550,11 +572,29 @@ def portfolios(
                         .over(["pf", "eom"])
                         .alias("w")
                     )
-                
-                sub = sub.with_columns([pl.when(pl.col(var).is_null()).then(pl.lit(0)).otherwise(pl.col(var)).alias(var) for var in chars])
-                pf_signals = sub.with_columns([(pl.col("w") * pl.col(var)).sum().over(["pf", "eom"]) for var in chars])
-                
-                pf_signals = pf_signals.with_columns([pl.lit(x).alias("characteristic"), pl.col("eom").dt.offset_by("1mo").dt.month_end().alias("eom")])
+
+                sub = sub.with_columns(
+                    [
+                        pl.when(pl.col(var).is_null())
+                        .then(pl.lit(0))
+                        .otherwise(pl.col(var))
+                        .alias(var)
+                        for var in chars
+                    ]
+                )
+                pf_signals = sub.with_columns(
+                    [
+                        (pl.col("w") * pl.col(var)).sum().over(["pf", "eom"])
+                        for var in chars
+                    ]
+                )
+
+                pf_signals = pf_signals.with_columns(
+                    [
+                        pl.lit(x).alias("characteristic"),
+                        pl.col("eom").dt.offset_by("1mo").dt.month_end().alias("eom"),
+                    ]
+                )
                 signals = pf_signals.clone()  # store in dictionary later
                 op["signals"] = signals.collect()
 
@@ -735,7 +775,8 @@ def regional_data(
     )
     # Portfolio Return
     pf = data.filter(
-        (pl.col("excntry").is_in(countries.implode())) & (pl.col("n_stocks_min") >= stocks_min)
+        (pl.col("excntry").is_in(countries.implode()))
+        & (pl.col("n_stocks_min") >= stocks_min)
     )
     pf = pf.join(weights, on=["excntry", date_col], how="left")
     pf = (
@@ -770,7 +811,11 @@ def regional_data(
 
     return pf
 
-print(f"Start          : {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}", flush=True)
+
+print(
+    f"Start          : {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}",
+    flush=True,
+)
 # Extract Neccesary Information
 # Read Factor details from Excel file
 char_info = (
@@ -779,7 +824,9 @@ char_info = (
         sheet_name="details",
     )
     .filter(pl.col("abr_jkp").is_not_null())
-    .select([pl.col("abr_jkp").alias("characteristic"), pl.col("direction").cast(pl.Int32)])
+    .select(
+        [pl.col("abr_jkp").alias("characteristic"), pl.col("direction").cast(pl.Int32)]
+    )
 )
 
 # Read country classification details from Excel file
@@ -790,7 +837,9 @@ country_classification = pl.read_excel(
 
 # getting relevannt information from country classification file loaded at the start loaded at the start.
 # Select columns
-country_classification = country_classification.select(["excntry", "msci_development", "region"])
+country_classification = country_classification.select(
+    ["excntry", "msci_development", "region"]
+)
 # Filter out rows with NA in 'excntry' and exclude specific countries
 country_classification = country_classification.filter(
     (pl.col("excntry").is_not_null())
@@ -840,7 +889,9 @@ ret_cutoffs = ret_cutoffs.with_columns(
     (pl.col("eom").dt.month_start().dt.offset_by("-1d")).alias("eom_lag1")
 )
 if settings["daily_pf"]:
-    ret_cutoffs_daily = pl.read_parquet(f"{data_path}/other_output/return_cutoffs_daily.parquet")
+    ret_cutoffs_daily = pl.read_parquet(
+        f"{data_path}/other_output/return_cutoffs_daily.parquet"
+    )
 
 # market_returns
 market = pl.read_parquet(f"{data_path}/other_output/market_returns.parquet")
@@ -848,7 +899,9 @@ market = pl.read_parquet(f"{data_path}/other_output/market_returns.parquet")
 
 # daily_market_returns
 if settings["daily_pf"]:
-    market_daily = pl.read_parquet(f"{data_path}/other_output/market_returns_daily.parquet")
+    market_daily = pl.read_parquet(
+        f"{data_path}/other_output/market_returns_daily.parquet"
+    )
     # market_daily = market_daily.with_columns(pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, format="%Y%m%d").alias("date"))
 
 
@@ -1017,7 +1070,9 @@ if pf_returns is not None and pf_returns.height > 0:
 
     # Define columns to be modified
     resign_cols = ["signal", "ret_ew", "ret_vw", "ret_vw_cap"]
-    lms_returns = lms_returns.with_columns([pl.col(var) * pl.col("direction").alias(var) for var in resign_cols])
+    lms_returns = lms_returns.with_columns(
+        [pl.col(var) * pl.col("direction").alias(var) for var in resign_cols]
+    )
 else:
     hml_returns = None
     lms_returns = None
@@ -1055,7 +1110,9 @@ if settings["daily_pf"] and pf_daily is not None and pf_daily.height > 0:
     lms_daily = char_info.join(hml_daily, on="characteristic", how="left")
     resign_cols = ["ret_ew", "ret_vw", "ret_vw_cap"]
 
-    lms_daily = lms_daily.with_columns([(pl.col(var) * pl.col("direction")).alias(var) for var in resign_cols])
+    lms_daily = lms_daily.with_columns(
+        [(pl.col(var) * pl.col("direction")).alias(var) for var in resign_cols]
+    )
 else:
     hml_daily = None
     lms_daily = None
@@ -1266,9 +1323,9 @@ else:
 
 # Writing output
 # if "market" in globals():
-    # market.filter(pl.col("eom") <= settings["end_date"]).write_parquet(
-    #     f"{output_path}/market_returns.parquet"
-    # )
+# market.filter(pl.col("eom") <= settings["end_date"]).write_parquet(
+#     f"{output_path}/market_returns.parquet"
+# )
 if "pf_returns" in globals() and pf_returns is not None:
     pf_returns.filter(pl.col("eom") <= settings["end_date"]).write_parquet(
         f"{output_path}/pfs.parquet"
@@ -1326,7 +1383,7 @@ if settings["ind_pf"]:
 
 # Create directory for Regional Factors
 if "regional_pfs" in globals() and regional_pfs is not None:
-    reg_folder = os.path.join(output_path, "Regional Factors")
+    reg_folder = os.path.join(output_path, "regional_factors")
     if not os.path.exists(reg_folder):
         os.makedirs(reg_folder)
 
@@ -1342,7 +1399,7 @@ if "regional_pfs" in globals() and regional_pfs is not None:
 if settings["daily_pf"]:
     if "regional_pfs_daily" in globals() and regional_pfs_daily is not None:
         # Create directory for Daily Regional Factors
-        reg_folder_daily = os.path.join(output_path, "Regional Factors Daily")
+        reg_folder_daily = os.path.join(output_path, "regional_factors_daily")
         if not os.path.exists(reg_folder_daily):
             os.makedirs(reg_folder_daily)
 
@@ -1357,7 +1414,7 @@ if settings["daily_pf"]:
 
 # Create directory for Regional Clusters
 if "regional_clusters" in globals() and regional_clusters is not None:
-    reg_folder = os.path.join(output_path, "Regional Clusters")
+    reg_folder = os.path.join(output_path, "regional_clusters")
     if not os.path.exists(reg_folder):
         os.makedirs(reg_folder)
 
@@ -1373,7 +1430,7 @@ if "regional_clusters" in globals() and regional_clusters is not None:
 if settings["daily_pf"]:
     if "regional_clusters_daily" in globals() and regional_clusters_daily is not None:
         # Create directory for Daily Regional Clusters
-        reg_folder_daily = os.path.join(output_path, "Regional Clusters Daily")
+        reg_folder_daily = os.path.join(output_path, "regional_clusters_daily")
         if not os.path.exists(reg_folder_daily):
             os.makedirs(reg_folder_daily)
 
@@ -1388,7 +1445,7 @@ if settings["daily_pf"]:
 
 # Create directory for Country Factors
 if "lms_returns" in globals() and lms_returns is not None:
-    cnt_folder = os.path.join(output_path, "Country Factors")
+    cnt_folder = os.path.join(output_path, "country_factors")
     if not os.path.exists(cnt_folder):
         os.makedirs(cnt_folder)
 
@@ -1405,7 +1462,7 @@ if "lms_returns" in globals() and lms_returns is not None:
 if settings["daily_pf"]:
     if "lms_daily" in globals() and lms_daily is not None:
         # Create directory for Daily Country Factors
-        cnt_folder_daily = os.path.join(output_path, "Country Factors Daily")
+        cnt_folder_daily = os.path.join(output_path, "country_factors_daily")
         if not os.path.exists(cnt_folder_daily):
             os.makedirs(cnt_folder_daily)
 
@@ -1413,9 +1470,13 @@ if settings["daily_pf"]:
         for exc in lms_daily["excntry"].unique():
             if exc:
                 filtered_df_daily = lms_daily.filter(
-                    (pl.col("date") <= settings["end_date"]) & (pl.col("excntry") == exc)
+                    (pl.col("date") <= settings["end_date"])
+                    & (pl.col("excntry") == exc)
                 )
                 file_path_daily = os.path.join(cnt_folder_daily, f"{exc}.parquet")
                 filtered_df_daily.write_parquet(file_path_daily)
 
-print(f"End            : {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}", flush=True)
+print(
+    f"End            : {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}",
+    flush=True,
+)
