@@ -8297,7 +8297,8 @@ def save_main_data(end_date):
     ( FORMAT PARQUET,
       COMPRESSION ZSTD,
       PARTITION_BY (excntry),
-      WRITE_PARTITION_COLUMNS TRUE
+      WRITE_PARTITION_COLUMNS TRUE,
+      OVERWRITE_OR_IGNORE
       );
     """)
     con.close()
