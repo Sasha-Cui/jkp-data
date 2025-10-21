@@ -8398,7 +8398,7 @@ def save_accounting_data():
         3) Write results to accounting_data folder.
 
     Output:
-        'accounting_data/Quarterly.parquet' and 'accounting_data/Annual.parquet'.
+        'accounting_data/quarterly.parquet' and 'accounting_data/annual.parquet'.
     """
     pl.scan_parquet("../interim/acc_std_qtr.parquet").filter(
         col("source").is_not_null()

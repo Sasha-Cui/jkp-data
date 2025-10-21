@@ -20,80 +20,22 @@ return_cutoffs("m", 0)
 return_cutoffs("d", 0)
 market_returns("world_dsf.parquet", "d", 1, "return_cutoffs_daily.parquet")
 market_returns("world_msf.parquet", "m", 1, "return_cutoffs.parquet")
-standardized_accounting_data(
-    "world", 1, "world_msf.parquet", 1, pl.datetime(1949, 12, 31)
-)
-create_acc_chars(
-    "acc_std_ann.parquet",
-    "achars_world.parquet",
-    4,
-    18,
-    acc_chars_list(),
-    "world_msf.parquet",
-    "",
-)
-create_acc_chars(
-    "acc_std_qtr.parquet",
-    "qchars_world.parquet",
-    4,
-    18,
-    acc_chars_list(),
-    "world_msf.parquet",
-    "_qitem",
-)
-combine_ann_qtr_chars(
-    "achars_world.parquet", "qchars_world.parquet", acc_chars_list(), "_qitem"
-)
+standardized_accounting_data("world", 1, "world_msf.parquet", 1, pl.datetime(1949, 12, 31))
+create_acc_chars("acc_std_ann.parquet", "achars_world.parquet", 4, 18, acc_chars_list(), "world_msf.parquet", "",)
+create_acc_chars("acc_std_qtr.parquet", "qchars_world.parquet", 4, 18, acc_chars_list(), "world_msf.parquet", "_qitem",)
+combine_ann_qtr_chars("achars_world.parquet", "qchars_world.parquet", acc_chars_list(), "_qitem")
 market_chars_monthly("world_msf.parquet", "market_returns.parquet")
-create_world_data_prelim(
-    "world_msf.parquet",
-    "market_chars_m.parquet",
-    "acc_chars_world.parquet",
-    "world_data_prelim.parquet",
-)
-ap_factors(
-    "ap_factors_daily.parquet",
-    "d",
-    "world_dsf.parquet",
-    "world_data_prelim.parquet",
-    "market_returns_daily.parquet",
-    10,
-    3,
-)
-ap_factors(
-    "ap_factors_monthly.parquet",
-    "m",
-    "world_msf.parquet",
-    "world_data_prelim.parquet",
-    "market_returns.parquet",
-    10,
-    3,
-)
+create_world_data_prelim("world_msf.parquet", "market_chars_m.parquet", "acc_chars_world.parquet", "world_data_prelim.parquet",)
+ap_factors("ap_factors_daily.parquet", "d", "world_dsf.parquet", "world_data_prelim.parquet", "market_returns_daily.parquet", 10, 3,)
+ap_factors("ap_factors_monthly.parquet", "m", "world_msf.parquet", "world_data_prelim.parquet", "market_returns.parquet", 10, 3,)
 firm_age("world_msf.parquet")
 mispricing_factors("world_data_prelim.parquet", 10, min_fcts=3)
-market_beta(
-    "beta_60m.parquet", "world_msf.parquet", "ap_factors_monthly.parquet", 60, 36
-)
-residual_momentum(
-    "resmom_ff3", "world_msf.parquet", "ap_factors_monthly.parquet", 36, 24, 12, 1
-)
-residual_momentum(
-    "resmom_ff3", "world_msf.parquet", "ap_factors_monthly.parquet", 36, 24, 6, 1
-)
-bidask_hl(
-    "corwin_schultz.parquet", "world_dsf.parquet", "market_returns_daily.parquet", 10
-)
+market_beta("beta_60m.parquet", "world_msf.parquet", "ap_factors_monthly.parquet", 60, 36)
+residual_momentum("resmom_ff3", "world_msf.parquet", "ap_factors_monthly.parquet", 36, 24, 12, 1)
+residual_momentum("resmom_ff3", "world_msf.parquet", "ap_factors_monthly.parquet", 36, 24, 6, 1)
+bidask_hl("corwin_schultz.parquet", "world_dsf.parquet", "market_returns_daily.parquet", 10)
 prepare_daily("world_dsf.parquet", "ap_factors_daily.parquet")
-for var in [
-    "rvol",
-    "rmax",
-    "skew",
-    "capm_ext",
-    "ff3",
-    "hxz4",
-    "dimsonbeta",
-    "zero_trades",
-]:
+for var in ["rvol", "rmax", "skew", "capm_ext", "ff3", "hxz4", "dimsonbeta", "zero_trades"]:
     roll_apply_daily(var, "_21d", 15)
 for var in ["zero_trades", "turnover", "dolvol", "ami"]:
     roll_apply_daily(var, "_126d", 60)

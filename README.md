@@ -75,6 +75,7 @@ At the end of the routine, you will find the output in:
 ```
 SAS-Python-Migrate/build_database/data/processed/
 ```
+Please see the release notes for a description of the output files.
 
 ### Notes
 
@@ -87,6 +88,8 @@ For example, for May 6, 1992, use:
 ```python
 end_date = pl.datetime(1992, 5, 6)
 ```
+
+A wide array of options for portfolios is available in the source code. For example, characteristic managed portfolios. Please refer to the SAS version of the code for more extensive documentation of the portfolio code since the Python version replicates the R code and there are no major changes in the structure of the code. 
 
 ## Hardware Requirements
 
