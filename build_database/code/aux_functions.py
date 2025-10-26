@@ -6831,7 +6831,7 @@ def sort_ff_style(char, min_stocks_bp, min_stocks_pf, date_col, data, sf):
     Output:
         Tidy DataFrame with per-country portfolio returns and composites for the characteristic.
     """
-    print(f"Executing sort_ff_style for {char}", flush=True)
+    # print(f"Executing sort_ff_style for {char}", flush=True)
     c1 = (
         (
             (col("size_grp_l").is_in(["small", "large", "mega"]))
