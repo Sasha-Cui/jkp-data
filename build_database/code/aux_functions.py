@@ -6856,8 +6856,8 @@ def sort_ff_style(char, min_stocks_bp, min_stocks_pf, date_col, data, sf):
                     eom,
                     excntry_l,
                     COUNT(*) AS n,
-                    quantile({char}_l, 0.3) AS bp_p30,
-                    quantile({char}_l, 0.7) AS bp_p70
+                    quantile_disc({char}_l, 0.3) AS bp_p30,
+                    quantile_disc({char}_l, 0.7) AS bp_p70
                 FROM self
                 GROUP BY eom, excntry_l
             """)
