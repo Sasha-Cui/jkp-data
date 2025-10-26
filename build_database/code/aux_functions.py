@@ -6972,7 +6972,7 @@ def ap_factors(
         "niq_be",
     ]
 
-    print(f"Executing AP factors with frequency {freq}", flush=True)
+    # print(f"Executing AP factors with frequency {freq}", flush=True)
 
     world_sf1 = (
         pl.scan_parquet(sf_path)
