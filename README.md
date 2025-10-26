@@ -53,11 +53,11 @@ This document provides instructions for creating a dataset based on the paper *â
 
      In interactive mode, navigate to `SAS-Python-Migrate` and run:
      ```sh
-     python build_database/slurm/main.py
+     python build_database/code/main.py
      ```
      This will create the characteristics dataset at stock-level. To get the portfolio return series, run:
      ```sh
-     python build_database/slurm/portfolio.py
+     python build_database/code/portfolio.py
      ```
 
    During the initial execution, you may be prompted to grant access to WRDS using two-factor authentication (2FA), such as a Duo notification.  
