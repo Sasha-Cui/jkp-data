@@ -2987,25 +2987,27 @@ def nyse_size_cutoffs(data_path):
         'nyse_cutoffs.parquet' with [eom, n, nyse_p1, nyse_p20, nyse_p50, nyse_p80].
     """
     nyse_sf = (
-        pl.scan_parquet(data_path)
-        .filter(
-            (col("crsp_exchcd") == 1)  # NYSE exchange code
-            & (col("obs_main") == 1)  # Main observation flag
-            & (col("exch_main") == 1)  # Main exchange flag
-            & (col("primary_sec") == 1)  # Primary security flag
-            & (col("common") == 1)  # Common stock flag
-            & (col("me").is_not_null())
-        )  # Ensure market equity (me) is not null
-        .group_by("eom")
-        .agg(
-            n=col("me").count(),
-            nyse_p1=perc_exp("me", lambda x: perc_method(x, 0.01)),
-            nyse_p20=perc_exp("me", lambda x: perc_method(x, 0.20)),
-            nyse_p50=perc_exp("me", lambda x: perc_method(x, 0.50)),
-            nyse_p80=perc_exp("me", lambda x: perc_method(x, 0.80)),
-        )
-    )
-    nyse_sf.collect().write_parquet("nyse_cutoffs.parquet")
+            pl.scan_parquet('__msf_world3.parquet')
+            .sql("""
+            SELECT 
+                eom,
+                COUNT(*)                    AS n,
+                quantile_disc(me, 0.01)     AS nyse_p1,
+                quantile_disc(me, 0.20)     AS nyse_p20,
+                quantile_disc(me, 0.50)     AS nyse_p50,
+                quantile_disc(me, 0.80)     AS nyse_p80 
+            FROM self
+            WHERE  crsp_exchcd = 1
+                AND obs_main   = 1
+                AND exch_main  = 1
+                AND primary_sec= 1
+                AND common     = 1
+                AND me IS NOT NULL
+            GROUP BY eom
+            ORDER BY eom
+            """)
+            )
+    nyse_sf.sink_parquet("nyse_cutoffs.parquet")
 
 
 @measure_time
@@ -3061,42 +3063,49 @@ def return_cutoffs(freq, crsp_only):
     Output:
         Writes 'return_cutoffs.parquet' (monthly) or 'return_cutoffs_daily.parquet' (daily).
     """
-    group_vars = ["eom"] if freq == "m" else ["year", "month"]
-    res_path = (
-        "return_cutoffs.parquet" if freq == "m" else "return_cutoffs_daily.parquet"
-    )
-    data = pl.scan_parquet(f"world_{freq}sf.parquet")
-    if crsp_only == 1:
-        data = data.filter(col("source_crsp") == 1)
-    data = data.filter(
-        (col("common") == 1)
-        & (col("obs_main") == 1)
-        & (col("exch_main") == 1)
-        & (col("primary_sec") == 1)
-        & (col("excntry") != "ZWE")
-        & (col("ret_exc").is_not_null())
-    )
+    group_vars = "eom" if freq == "m" else "year, month"
+    res_path = ("return_cutoffs.parquet" if freq == "m" else "return_cutoffs_daily.parquet")
     data = (
-        data.with_columns(year=col("date").dt.year(), month=col("date").dt.month())
-        .group_by(group_vars)
-        .agg(
-            n=col("ret").count(),
-            ret_0_1=perc_exp("ret", lambda x: perc_method(x, 0.001)),
-            ret_1=perc_exp("ret", lambda x: perc_method(x, 0.01)),
-            ret_99=perc_exp("ret", lambda x: perc_method(x, 0.99)),
-            ret_99_9=perc_exp("ret", lambda x: perc_method(x, 0.999)),
-            ret_local_0_1=perc_exp("ret_local", lambda x: perc_method(x, 0.001)),
-            ret_local_1=perc_exp("ret_local", lambda x: perc_method(x, 0.01)),
-            ret_local_99=perc_exp("ret_local", lambda x: perc_method(x, 0.99)),
-            ret_local_99_9=perc_exp("ret_local", lambda x: perc_method(x, 0.999)),
-            ret_exc_0_1=perc_exp("ret_exc", lambda x: perc_method(x, 0.001)),
-            ret_exc_1=perc_exp("ret_exc", lambda x: perc_method(x, 0.01)),
-            ret_exc_99=perc_exp("ret_exc", lambda x: perc_method(x, 0.99)),
-            ret_exc_99_9=perc_exp("ret_exc", lambda x: perc_method(x, 0.999)),
-        )
+            pl.scan_parquet(f"world_{freq}sf.parquet")
+            .filter(
+                (col("common") == 1)
+                & (col("obs_main") == 1)
+                & (col("exch_main") == 1)
+                & (col("primary_sec") == 1)
+                & (col("excntry") != "ZWE")
+                & (col("ret_exc").is_not_null())
+                & ( (col("source_crsp") == 1) if crsp_only == 1 else pl.lit(True) )
+                )
+            .with_columns(year=col("date").dt.year(), month=col("date").dt.month())
     )
-    data.sort(group_vars).collect().write_parquet(res_path)
+    data = data.sql(f"""
+            SELECT
+                {group_vars},
+                COUNT(ret)                                AS n,
 
+                -- ret percentiles
+                quantile_disc(ret,        0.001)          AS ret_0_1,
+                quantile_disc(ret,        0.01)           AS ret_1,
+                quantile_disc(ret,        0.99)           AS ret_99,
+                quantile_disc(ret,        0.999)          AS ret_99_9,
+
+                -- ret_local percentiles
+                quantile_disc(ret_local,  0.001)          AS ret_local_0_1,
+                quantile_disc(ret_local,  0.01)           AS ret_local_1,
+                quantile_disc(ret_local,  0.99)           AS ret_local_99,
+                quantile_disc(ret_local,  0.999)          AS ret_local_99_9,
+
+                -- ret_exc percentiles
+                quantile_disc(ret_exc,    0.001)          AS ret_exc_0_1,
+                quantile_disc(ret_exc,    0.01)           AS ret_exc_1,
+                quantile_disc(ret_exc,    0.99)           AS ret_exc_99,
+                quantile_disc(ret_exc,    0.999)          AS ret_exc_99_9
+
+            FROM self
+            GROUP BY {group_vars}
+            ORDER BY {group_vars}
+            """)
+    data.sink_parquet(res_path)
 
 def winsorize_mkt_ret(var, cutoff, comparison):
     """
@@ -8410,7 +8419,7 @@ def save_accounting_data():
 
 
 @measure_time
-def save_full_files_and_cleanup(clear_all = True):
+def save_full_files_and_cleanup(clear_all=True):
     """
     Description:
         Save full datasets and remove temporary files.
@@ -8435,7 +8444,8 @@ def save_full_files_and_cleanup(clear_all = True):
     ).collect(streaming=True).write_parquet(
         f"characteristics/world_data_filtered.parquet"
     )
-    if clear_all: os.system("rm -rf ../interim/* ../raw/*")
+    if clear_all:
+        os.system("rm -rf ../interim/* ../raw/*")
 
 
 @measure_time
