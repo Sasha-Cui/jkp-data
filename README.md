@@ -32,26 +32,26 @@ This document provides instructions for creating a dataset based on the paper *â
      ```
 3. **Input WRDS Credentials**
 
-   - Navigate to `SAS-Python-Migrate/build_database/code` and run:
+   - To save your WRDS credentials, run:
      ```sh
-     python jkp_credentials.py
+     python build_database/code/wrds_credentials.py
      ```
      Kindly follow the prompts.  
 
-     Note: If you need to change your password or credentials, run `python jkp_credentials.py --reset` and then `python jkp_credentials.py`
+     Note: If you need to change your password or credentials, run `python build_database/code/wrds_credentials.py --reset` and then `python build_database/code/wrds_credentials.py`
 
 4. **Run the Script**
 
    - Make sure you have activated your Conda environment.  
      A sample Slurm script is provided to run the Python routine on a cluster with a Slurm scheduler.
 
-   - Navigate to the `SAS-Python-Migrate` directory and run:
+   - Run:
      ```sh
      sbatch build_database/slurm/submit_job_som_hpc.slurm
      ```
      (This will create the characteristics and the portfolio datasets).
 
-     In interactive mode, navigate to `SAS-Python-Migrate` and run:
+     In interactive mode, run:
      ```sh
      python build_database/code/main.py
      ```
@@ -73,7 +73,7 @@ This document provides instructions for creating a dataset based on the paper *â
 
 At the end of the routine, you will find the output in:
 ```
-SAS-Python-Migrate/build_database/data/processed/
+build_database/data/processed/
 ```
 Please see the release notes (`release_notes.html`) for a description of the output files.
 
@@ -93,7 +93,7 @@ A wide array of options for portfolios is available in the source code. For exam
 
 To regenerate the release notes `html` file:
 1. Activate the `jkp_factors` conda environment
-2. Navigate do `SAS-Python-Migrate` and run: 
+2. Run: 
 ```sh
   quarto render release_notes_files/jkp_factors_migration.qmd --embed-resources && mv release_notes_files/jkp_factors_migration.html release_notes.html
 ```
