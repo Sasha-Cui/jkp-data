@@ -8274,7 +8274,11 @@ def save_daily_ret():
     con.execute(f"""
     COPY (SELECT * FROM read_parquet('../interim/daily_returns_temp.parquet'))
     TO '{OUT_DIR}'
-    ( FORMAT PARQUET, COMPRESSION ZSTD, PARTITION_BY (excntry));
+    ( FORMAT PARQUET, 
+      COMPRESSION ZSTD, 
+      PARTITION_BY (excntry), 
+      OVERWRITE_OR_IGNORE
+      );
     """)
     con.close()
     os.system(f"""
