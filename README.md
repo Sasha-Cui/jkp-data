@@ -83,7 +83,7 @@ To regenerate the release notes `html` file:
      ```
 2. Run: 
 ```sh
-  quarto render release_notes_files/jkp_factors_migration.qmd --embed-resources && mv release_notes_files/jkp_factors_migration.html release_notes.html
+  quarto render jkp_factors_migration.qmd --embed-resources
 ```
 
 ## Hardware Requirements
