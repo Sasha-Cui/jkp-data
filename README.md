@@ -29,8 +29,7 @@ This document provides instructions for creating a dataset based on the paper *â
 
 4. **Run the Script**
 
-   - Make sure you have activated your Conda environment.  
-     A sample Slurm script is provided to run the Python routine on a cluster with a Slurm scheduler.
+   - A sample Slurm script is provided to run the Python routine on a cluster with a Slurm scheduler.
 
    - Run:
      ```sh
