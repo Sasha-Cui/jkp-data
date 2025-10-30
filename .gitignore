@@ -27,7 +27,7 @@ env/
 # Data and Outputs
 # ==========================================
 *.parquet
-!release_notes_files/data/*.parquet
+!documentation/data/*.parquet
 *.csv
 *.xlsx
 *.xls
