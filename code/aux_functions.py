@@ -3318,13 +3318,7 @@ def quarterize(df, var_list):
         for var in var_list
     ]
     df = (
-        df.with_columns(n_obs = pl.len().over(["gvkey", "fyr", "fyearq", "fqtr"]))
-        .filter(
-            (col('n_obs') == 1)
-            |
-            ((col('n_obs') == 2) & (col('source') == 'GLOBAL'))
-        )
-        .unique(["gvkey", "fyr", "fyearq", "fqtr"])
+        df.unique(["gvkey", "fyr", "fyearq", "fqtr"])
         .sort(["gvkey", "fyr", "fyearq", "fqtr"])
         .with_columns(list_aux1)
         .sort(["gvkey", "fyr", "fyearq", "fqtr"])
