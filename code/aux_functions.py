@@ -3318,7 +3318,13 @@ def quarterize(df, var_list):
         for var in var_list
     ]
     df = (
-        df.unique(["gvkey", "fyr", "fyearq", "fqtr"])
+        df.with_columns(n_obs = pl.len().over(["gvkey", "fyr", "fyearq", "fqtr"]))
+        .filter(
+            (col('n_obs') == 1)
+            |
+            ((col('n_obs') == 2) & (col('source') == 'GLOBAL'))
+        )
+        .unique(["gvkey", "fyr", "fyearq", "fqtr"])
         .sort(["gvkey", "fyr", "fyearq", "fqtr"])
         .with_columns(list_aux1)
         .sort(["gvkey", "fyr", "fyearq", "fqtr"])
@@ -3918,8 +3924,8 @@ def standardized_accounting_data(
         )
         .sort(["gvkey", "datadate", "fyr", "source"])
         .unique(
-            ["gvkey", "datadate", "fyr"], keep="last"
-        )  # This means we prefer source = NA rather than GLOBAL for duplicate observations
+            ["gvkey", "datadate", "fyr"], keep="first"
+        )  # This means we prefer source = GLOBAL rather than NA for duplicate observations
         .sort(["gvkey", "datadate", "fyr"])
         .unique(["gvkey", "datadate"], keep="last")
         .drop(["fyr", "fyearq", "fqtr"])
