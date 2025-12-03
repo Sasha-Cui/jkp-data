@@ -89,4 +89,4 @@ To regenerate the release notes `html` file:
 
 ## Hardware Requirements
 
-We use a server with **450 GB RAM** and **128 CPU cores**. Running the routine takes about 4 hours.
+We use a server with **450 GB RAM** and **128 CPU cores**. Running the routine takes about 6 hours.
