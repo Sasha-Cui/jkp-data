@@ -57,7 +57,7 @@ At the end of the routine, you will find the output in:
 ```
 data/processed/
 ```
-Please see the release notes (`documentation/release_notes.html`) for a description of the output files. (Please render the quarto file locally to be able to access all features. See notes below).
+Please see the release notes (`documentation/release_notes.html`) for a description of the output files and a comparison between the output of the SAS/R codebase and the new Python codebase.
 
 ### Notes
 
@@ -71,7 +71,7 @@ For example, for May 6, 1992, use:
 end_date = pl.datetime(1992, 5, 6)
 ```
 
-A wide array of options for portfolios is available in the source code. For example, characteristic managed portfolios. Please refer to the SAS version of the code for more extensive documentation of the portfolio code since the Python version replicates the R code and there are no major changes in the structure of the code. 
+A wide array of options for portfolios is available in the source code. For example, characteristic managed portfolios. Please refer to the SAS version of the code for more extensive documentation of the portfolio code since the Python version replicates the R code and there are no major changes in the structure of the code.
 
 To regenerate the release notes `html` file:
 1. Navigate to `documentation/` and run:
@@ -84,7 +84,7 @@ To regenerate the release notes `html` file:
      ```
 2. Run: 
 ```sh
-  quarto render jkp_factors_migration.qmd --embed-resources
+  quarto render release_notes.qmd --to md
 ```
 
 ## Hardware Requirements
