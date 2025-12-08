@@ -437,6 +437,7 @@ plt.ylabel("Correlation (SAS vs Python)", fontsize=14)
 plt.title("Inverse CDF of correlations", fontsize=16)
 plt.xlim(0, 1)
 plt.ylim(-1, 1.1)
+plt.grid(True, linestyle='--', alpha=0.7)
 plt.legend(title="Portfolio")
 plt.tight_layout()
 ```
