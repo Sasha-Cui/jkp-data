@@ -75,3 +75,7 @@ config/python_keyring/
 .DS_Store
 build_database/.DS_Store
 *.ipynb
+
+# README Rendering helper files
+README_files/*
+README.html

@@ -1,6 +1,6 @@
-# Global Stock And Factors Database
+# Global Factor, Stock, and Firm data
 
-This document provides instructions for creating a dataset based on the paper *“Is There a Replication Crisis in Finance?”* by Jensen, Kelly, and Pedersen (*Journal of Finance*, 2023) as well as portfolio returns.
+This repo contains Python code to generate the global dataset of factor returns, stock returns, and firm characteristics from [“Is there a Replication Crisis in Finance?”](https://onlinelibrary.wiley.com/doi/full/10.1111/jofi.13249) by Jensen, Kelly, and Pedersen (Journal of Finance, 2023).
 
 ## Instructions
 
@@ -11,15 +11,15 @@ This document provides instructions for creating a dataset based on the paper *�
 
 ### Steps
 
-1. **Download the `SAS-Python-Migrate` folder**
+1. **Clone the repo**
 
-   - Download the folder to your local machine by running the following command:
+   - Clone the folder to your local machine by running the following command from your terminal:
      ```sh
      git clone git@github.com:bkelly-lab/SAS-Python-Migrate.git
      ```
-2. **Input WRDS Credentials**
+2. **Input WRDS credentials**
 
-   - To save your WRDS credentials, navigate to the `SAS-Python-Migrate/` folder and run:
+   - To save your WRDS credentials, navigate to the `jkp-data/` folder and run:
      ```sh
      uv run python code/wrds_credentials.py
      ```
@@ -27,66 +27,46 @@ This document provides instructions for creating a dataset based on the paper *�
 
      Note: If you need to change your password or credentials, run `uv run python code/wrds_credentials.py --reset` and then `uv run python code/wrds_credentials.py`
 
-4. **Run the Script**
+3. **Run the script**
 
-   - A sample Slurm script is provided to run the Python routine on a cluster with a Slurm scheduler.
-   - Before running the following set of commands, please make sure you are in `SAS-Python-Migrate/`
+   - We run the code via a Slurm scheduler, but we also show how to run it in an interactive Python session. 
 
-   - Run:
+   - Before running the following commands, make sure you are in `jkp-data/`
+
+   - On a cluster with a Slurm scheduler, run:
      ```sh
      sbatch slurm/submit_job_som_hpc.slurm
      ```
-     (This will create the characteristics and the portfolio datasets).
+     to create the factor returns, stock returns, and firm characteristics.
 
-     In interactive mode, run:
+     In an interactive session, run:
      ```sh
      uv run python code/main.py
      ```
-     This will create the characteristics dataset at stock-level. To get the portfolio return series, run:
+     to create the stock returns and firm characteristics, and 
      ```sh
      uv run python code/portfolio.py
      ```
+     to create the factor returns.
 
-   During the initial execution, you may be prompted to grant access to WRDS using two-factor authentication (2FA), such as a Duo notification.  
-   It is crucial to approve this request for the program to function correctly.
+   **IMPORTANT:** When starting the code, you may be prompted to grant access to WRDS using two-factor authentication, for example via a Duo notification. You need to approve this request, as the program will otherwise fail. After a few seconds or minutes, you should see data being created in `data/raw`. If that is not the case, please check your internet connection or credentials.
 
-   After a few seconds or minutes, you should see files being created in `code/raw_table`.  
-   If that is not the case, please check your internet connection or credentials.
-
-At the end of the routine, you will find the output in:
+When the code is finished, you can find the output in:
 ```
 data/processed/
 ```
 Please see the release notes (`documentation/release_notes.html`) for a description of the output files and a comparison between the output of the SAS/R codebase and the new Python codebase.
 
-### Notes
+## Notes
+- By default, the end date for the data in the code is 2024-12-31, which you can change by editing line 4 of the `code/main.py` file. For example, for May 6, 1992, use: `end_date = pl.datetime(1992, 5, 6)`.
 
-By default, the end date for the data in the code is **2024-12-31**.  
-You can change it by editing line 4 of the `main.py` file.  
+- To run the code, we utilize a high performance computing cluster, where we request 450 GB RAM and 128 CPU cores. Running the routine takes about 6 hours.
 
-The date should be in the format `'Year, Month, Day'` and entered as integers.  
-For example, for May 6, 1992, use:
+- To understand the data, please refer to our [documentation](https://jkpfactors.s3.amazonaws.com/documents/Documentation.pdf). 
 
-```python
-end_date = pl.datetime(1992, 5, 6)
-```
+- We distribute the global factor returns generated from this codebase at [jkpfactors.com](https://jkpfactors.com) and the stock returns and firm characteristics at [wrds-www.wharton.upenn.edu/pages/get-data/contributed-data-forms/global-factor-data/](https://wrds-www.wharton.upenn.edu/pages/get-data/contributed-data-forms/global-factor-data/).
 
-A wide array of options for portfolios is available in the source code. For example, characteristic managed portfolios. Please refer to the SAS version of the code for more extensive documentation of the portfolio code since the Python version replicates the R code and there are no major changes in the structure of the code.
+- The original SAS/R codebase is still available at [github.com/bkelly-lab/ReplicationCrisis](https://github.com/bkelly-lab/ReplicationCrisis), but we recommend using this new Python codebase for future work.
 
-To regenerate the release notes `html` file:
-1. Navigate to `documentation/` and run:
-    ```sh
-     conda create --name jkp_factors python=3.11.11 -y
-     conda activate jkp_factors
-     conda install -c conda-forge postgresql jupyter deno pandoc quarto -y
-     pip install -r requirements.txt
-     conda activate jkp_factors
-     ```
-2. Run: 
-```sh
-  quarto render release_notes.qmd --to md
-```
 
-## Hardware Requirements
 
-We use a server with **450 GB RAM** and **128 CPU cores**. Running the routine takes about 6 hours.
