@@ -8,6 +8,7 @@ import duckdb
 import ibis
 import polars as pl
 import polars_ds as pds
+import polars_ols
 from ibis import _
 from polars import col
 
